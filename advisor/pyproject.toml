@@ -1,0 +1,28 @@
+[project]
+name = "budget-governor-advisor"
+version = "0.1.0"
+description = "Budget Governor cost advisor: LLM-backed suggestions gated by a deterministic policy engine"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.141,<0.142",
+    "uvicorn[standard]>=0.52,<0.53",
+    "pydantic>=2.13,<3",
+    "httpx>=0.28,<0.29",
+    "prometheus-client>=0.20,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.1,<10",
+    "pytest-asyncio>=1.4,<2",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
