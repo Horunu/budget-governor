@@ -1,0 +1,184 @@
+name: budget-governor
+
+x-env: &common-env
+  POSTGRES_DSN: ${POSTGRES_DSN:-postgres://budget_governor:budget_governor@postgres:5432/budget_governor?sslmode=disable}
+  REDIS_ADDR: ${REDIS_ADDR:-redis:6379}
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-budget_governor}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-budget_governor}
+      POSTGRES_DB: ${POSTGRES_DB:-budget_governor}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-budget_governor}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: scripts/Dockerfile.migrate
+    environment:
+      <<: *common-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  gateway:
+    build:
+      context: ../gateway
+    environment:
+      <<: *common-env
+      GATEWAY_HTTP_ADDR: ":8080"
+      GATEWAY_METRICS_ADDR: ":9090"
+      ADVISOR_URL: "http://advisor:8082"
+      ADVISOR_TIMEOUT_MS: ${ADVISOR_TIMEOUT_MS:-300}
+      AUTH_CACHE_TTL_SECONDS: ${AUTH_CACHE_TTL_SECONDS:-60}
+      BUDGET_CACHE_TTL_SECONDS: ${BUDGET_CACHE_TTL_SECONDS:-30}
+      MOCK_PROVIDER_LATENCY_MIN_MS: ${MOCK_PROVIDER_LATENCY_MIN_MS:-50}
+      MOCK_PROVIDER_LATENCY_MAX_MS: ${MOCK_PROVIDER_LATENCY_MAX_MS:-500}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com/v1}
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  controlplane:
+    build:
+      context: ../controlplane
+    environment:
+      <<: *common-env
+      PLATFORM_BOOTSTRAP_TOKEN: ${PLATFORM_BOOTSTRAP_TOKEN:-dev-only-change-me}
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  advisor:
+    build:
+      context: ..
+      dockerfile: advisor/Dockerfile
+    environment:
+      ADVISOR_LLM_PROVIDER: ${ADVISOR_LLM_PROVIDER:-mock}
+      ADVISOR_OPENAI_MODEL: ${ADVISOR_OPENAI_MODEL:-gpt-4o-mini}
+      ADVISOR_ANTHROPIC_MODEL: ${ADVISOR_ANTHROPIC_MODEL:-claude-haiku-4-5}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com/v1}
+    ports:
+      - "8082:8082"
+
+  reconciliation:
+    build:
+      context: ..
+      dockerfile: reconciliation/Dockerfile
+    environment:
+      <<: *common-env
+      RECONCILIATION_DRIFT_THRESHOLD_PCT: ${RECONCILIATION_DRIFT_THRESHOLD_PCT:-0.05}
+      OPENAI_ADMIN_KEY: ${OPENAI_ADMIN_KEY:-}
+      ANTHROPIC_ADMIN_KEY: ${ANTHROPIC_ADMIN_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-budget_governor}:${POSTGRES_PASSWORD:-budget_governor}@postgres:5432/${POSTGRES_DB:-budget_governor}?sslmode=disable"
+    command:
+      - "--extend.query-path=/etc/postgres_exporter/queries.yaml"
+    volumes:
+      - ../observability/prometheus/postgres_queries.yaml:/etc/postgres_exporter/queries.yaml:ro
+    ports:
+      - "9187:9187"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.62.0
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+    ports:
+      - "9121:9121"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    ports:
+      - "9100:9100"
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    volumes:
+      - ../observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../observability/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - promdata:/prometheus
+    ports:
+      - "9091:9090"
+    depends_on:
+      - gateway
+      - controlplane
+      - advisor
+      - postgres-exporter
+      - redis-exporter
+      - node-exporter
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ../observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../observability/grafana/dashboards:/etc/grafana/provisioning/dashboards/json:ro
+      - grafanadata:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+volumes:
+  pgdata:
+  redisdata:
+  promdata:
+  grafanadata:
