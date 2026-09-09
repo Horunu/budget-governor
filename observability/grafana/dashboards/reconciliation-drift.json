@@ -1,0 +1,88 @@
+{
+  "title": "Reconciliation Drift",
+  "uid": "bg-reconciliation-drift",
+  "tags": ["budget-governor"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-7d", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Gateway-observed vs. provider-reported spend (latest reconciliation run per tenant)",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
+      "description": "Both series are exposed via the postgres_exporter custom query in observability/prometheus/postgres_queries.yaml, sourced from reconciliation_drift rows written by reconciliation/job.py.",
+      "targets": [
+        {
+          "expr": "pg_reconciliation_drift_gateway_observed_usd",
+          "legendFormat": "{{tenant_id}} gateway-observed",
+          "refId": "A"
+        },
+        {
+          "expr": "pg_reconciliation_drift_provider_reported_usd",
+          "legendFormat": "{{tenant_id}} provider-reported",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Latest drift % by tenant (unresolved incidents)",
+      "type": "bargauge",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.05 },
+              { "color": "red", "value": 0.10 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "pg_reconciliation_drift_drift_pct",
+          "legendFormat": "{{tenant_id}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Latest drift amount ($) by tenant (unresolved incidents)",
+      "type": "bargauge",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "pg_reconciliation_drift_drift_amount_usd",
+          "legendFormat": "{{tenant_id}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Open drift incidents",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 17 },
+      "targets": [
+        {
+          "expr": "pg_reconciliation_drift_drift_pct",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,105 @@
+groups:
+  - name: budget-governor
+    rules:
+      # Fires BEFORE a budget is exhausted, not after -- extrapolates the
+      # current burn rate (the most-constrained bucket's saturation
+      # trend over the last 15m) forward 1h and alerts if that
+      # projection would cross 100% saturation. See
+      # docs/RUNBOOK.md#burnratehigh.
+      - alert: BurnRateHigh
+        expr: |
+          predict_linear(budget_governor_gateway_bucket_saturation_ratio[15m], 3600) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tenant {{ $labels.tenant_id }} ({{ $labels.scope }} scope) is projected to exhaust its budget within 1 hour"
+          description: >
+            Current burn rate on the {{ $labels.scope }} budget bucket for tenant
+            {{ $labels.tenant_id }} projects >100% saturation within 60 minutes at
+            the last 15m trend. Saturation is currently
+            {{ $value | printf "%.2f" }} (projected).
+          runbook: docs/RUNBOOK.md#burnratehigh
+
+      # Compares gateway-observed spend against provider-billed spend
+      # (see reconciliation/job.py); sourced from Postgres via the
+      # postgres_exporter custom query in
+      # observability/prometheus/postgres_queries.yaml, since drift is
+      # computed by a batch job, not emitted live by any service.
+      - alert: ReconciliationDriftHigh
+        expr: |
+          pg_reconciliation_drift_drift_pct > 0.10
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Reconciliation drift for tenant {{ $labels.tenant_id }} exceeds 10%"
+          description: >
+            Gateway-observed spend diverges from provider-billed spend by
+            {{ $value | printf "%.1f" }}% for tenant {{ $labels.tenant_id }}
+            in the most recent unresolved reconciliation run.
+          runbook: docs/RUNBOOK.md#reconciliationdrifthigh
+
+      # The gateway's core latency claim: p99 overhead on ALLOWED
+      # (steady-state hot-path) requests must stay under 10ms. Rejected/
+      # advised requests are excluded -- they deliberately involve an
+      # extra Redis round trip and, for the advised path, the advisor
+      # call, and were never part of the p99 claim (see
+      # docs/ARCHITECTURE.md#hot-path-latency-budget).
+      - alert: GatewayLatencyHigh
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(budget_governor_gateway_request_duration_seconds_bucket{decision="allowed"}[5m])) by (le)
+          ) > 0.010
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Gateway p99 latency on allowed requests exceeds 10ms"
+          description: >
+            p99 request duration for allowed requests has been above the
+            10ms budget for 5 minutes (current: {{ $value | printf "%.4f" }}s).
+          runbook: docs/RUNBOOK.md#gatewaylatencyhigh
+
+      - alert: RejectionRateHigh
+        expr: |
+          (
+            sum(rate(budget_governor_gateway_rejections_total[10m]))
+            /
+            sum(rate(budget_governor_gateway_requests_total[10m]))
+          ) > 0.20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Gateway rejection rate exceeds 20%"
+          description: >
+            {{ $value | printf "%.1f" }}% of gateway requests have been
+            rejected (budget exceeded) over the last 10 minutes. Could
+            indicate under-provisioned budgets or a runaway agent.
+          runbook: docs/RUNBOOK.md#rejectionratehigh
+
+      # A ">3x the trailing-hour baseline" spike detector rather than a
+      # fixed absolute rate, since "normal" 5xx volume scales with
+      # traffic -- tune the 3x multiplier and the `> 0` guard (which
+      # prevents firing on near-zero noise) to your own traffic profile.
+      - alert: ProviderErrorSpike
+        expr: |
+          (
+            sum(rate(budget_governor_gateway_provider_errors_total{status_class="5xx"}[5m])) > 0.05
+          )
+          and
+          (
+            sum(rate(budget_governor_gateway_provider_errors_total{status_class="5xx"}[5m]))
+            >
+            3 * sum(rate(budget_governor_gateway_provider_errors_total{status_class="5xx"}[1h] offset 5m))
+          )
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Upstream provider 5xx error rate has spiked"
+          description: >
+            Provider 5xx error rate is more than 3x its trailing-hour
+            baseline for 2 minutes (current: {{ $value | printf "%.3f" }}/s).
+          runbook: docs/RUNBOOK.md#providererrorspike
