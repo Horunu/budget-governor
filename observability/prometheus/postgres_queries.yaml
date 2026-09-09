@@ -1,0 +1,40 @@
+# Custom queries for prometheus-community/postgres_exporter
+# (https://github.com/prometheus-community/postgres_exporter), mounted
+# via its --extend.query-path flag (see deploy/docker-compose.yml).
+#
+# Reconciliation drift is computed by a batch job (reconciliation/job.py)
+# and only ever lands in Postgres -- there is no live service to scrape
+# it from directly. Exposing it here as a gauge is what lets
+# observability/prometheus/alerts.yml's ReconciliationDriftHigh rule
+# (plain PromQL) see it at all.
+pg_reconciliation_drift:
+  query: |
+    SELECT DISTINCT ON (tenant_id)
+      tenant_id,
+      drift_pct,
+      drift_amount_usd,
+      gateway_observed_usd,
+      provider_reported_usd,
+      extract(epoch from created_at) AS observed_at_unixtime
+    FROM reconciliation_drift
+    WHERE resolved_at IS NULL
+    ORDER BY tenant_id, created_at DESC
+  metrics:
+    - tenant_id:
+        usage: LABEL
+        description: Tenant this drift measurement belongs to.
+    - drift_pct:
+        usage: GAUGE
+        description: Most recent unresolved reconciliation drift, as a fraction (0.10 = 10%).
+    - drift_amount_usd:
+        usage: GAUGE
+        description: Most recent unresolved reconciliation drift amount, in USD.
+    - gateway_observed_usd:
+        usage: GAUGE
+        description: Gateway-observed spend for the reconciled window, in USD.
+    - provider_reported_usd:
+        usage: GAUGE
+        description: Provider-billed spend for the reconciled window, in USD.
+    - observed_at_unixtime:
+        usage: GAUGE
+        description: Unix timestamp the underlying reconciliation_drift row was created.

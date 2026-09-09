@@ -1,0 +1,110 @@
+{
+  "title": "Tenant Overview",
+  "uid": "bg-tenant-overview",
+  "tags": ["budget-governor"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Spend per tenant over time ($/5m)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "sum by (tenant_id) (increase(budget_governor_gateway_cost_usd_total[5m]))",
+          "legendFormat": "{{tenant_id}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Current burn rate ($/hour, projected from last 5m)",
+      "type": "bargauge",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "sum by (tenant_id) (rate(budget_governor_gateway_cost_usd_total[5m])) * 3600",
+          "legendFormat": "{{tenant_id}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Budget utilization % (tenant-scope bucket)",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.7 },
+              { "color": "red", "value": 0.9 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "budget_governor_gateway_bucket_saturation_ratio{scope=\"tenant\"}",
+          "legendFormat": "{{tenant_id}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Top agents by cost (last 24h)",
+      "type": "table",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "topk(10, sum by (tenant_id, agent_id) (increase(budget_governor_gateway_cost_usd_total[24h])))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Requests by decision (last 1h)",
+      "type": "piechart",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 25 },
+      "targets": [
+        {
+          "expr": "sum by (decision) (increase(budget_governor_gateway_requests_total[1h]))",
+          "legendFormat": "{{decision}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Tokens consumed per tenant (in vs out, last 1h)",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 25 },
+      "targets": [
+        {
+          "expr": "sum by (tenant_id, direction) (increase(budget_governor_gateway_tokens_total[5m]))",
+          "legendFormat": "{{tenant_id}} ({{direction}})",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}
