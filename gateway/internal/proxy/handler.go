@@ -394,7 +394,7 @@ func (h *Handler) finish(c *gin.Context, req provider.Request, refs []budget.Buc
 		h.Metrics.TokensTotal.WithLabelValues(req.TenantID, req.Model, "out").Add(float64(usage.TokensOut))
 	}
 	if costUSD > 0 {
-		h.Metrics.CostUSDTotal.WithLabelValues(req.TenantID, req.Model).Add(costUSD)
+		h.Metrics.CostUSDTotal.WithLabelValues(req.TenantID, req.AgentID, req.Model).Add(costUSD)
 	}
 	if decisionLabel == "rejected" {
 		h.Metrics.RejectionsTotal.WithLabelValues(req.TenantID, reason).Inc()

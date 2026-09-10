@@ -8,6 +8,7 @@ dependencies = [
     "uvicorn[standard]>=0.52,<0.53",
     "pydantic>=2.13,<3",
     "httpx>=0.28,<0.29",
+    "prometheus-client>=0.20,<1",
 ]
 
 [project.optional-dependencies]

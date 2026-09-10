@@ -62,8 +62,14 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Namespace: "budget_governor",
 			Subsystem: "gateway",
 			Name:      "cost_usd_total",
-			Help:      "Total gateway-observed cost in USD, by tenant and model.",
-		}, []string{"tenant_id", "model"}),
+			// agent_id is included (unlike most other gateway metrics)
+			// specifically to drive the Tenant Overview dashboard's "top
+			// agents by cost" panel. Cardinality stays bounded in
+			// practice: agent count per tenant is small and
+			// operator-controlled (created via the control plane's
+			// POST /v1/agents), unlike e.g. trace_id.
+			Help: "Total gateway-observed cost in USD, by tenant, agent, and model.",
+		}, []string{"tenant_id", "agent_id", "model"}),
 
 		RejectionsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: "budget_governor",

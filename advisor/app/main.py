@@ -10,9 +10,12 @@ from fastapi import FastAPI
 
 from app.advisor import get_suggestions
 from app.config import build_llm_client
+from app.metrics import ADVISE_REQUESTS_TOTAL, MetricsMiddleware, metrics_endpoint
 from app.schemas import AdviseRequest, AdviseResponse
 
 app = FastAPI(title="Budget Governor Cost Advisor", version="0.1.0")
+app.add_middleware(MetricsMiddleware)
+app.add_route("/metrics", lambda request: metrics_endpoint(), methods=["GET"])
 
 _llm_client = build_llm_client()
 
@@ -24,4 +27,7 @@ async def health() -> dict:
 
 @app.post("/v1/advise", response_model=AdviseResponse)
 async def advise(request: AdviseRequest) -> AdviseResponse:
-    return await get_suggestions(request, _llm_client)
+    response = await get_suggestions(request, _llm_client)
+    outcome = "suggested" if response.suggestions else "no_suggestions"
+    ADVISE_REQUESTS_TOTAL.labels(outcome=outcome).inc()
+    return response

@@ -360,3 +360,23 @@ clients), so the identical name is a real import collision, not just a
 cosmetic one. `reconciliation/providers/` is renamed to
 `reconciliation/usage_providers/` to resolve it; the top-level
 `providers/` keeps the name the layout specifies.
+
+---
+
+## Note: no Loki/Promtail -- structured JSON logs to stdout, viewed via `docker compose logs`
+
+Layout deviation, not an ADR-worthy decision: the target layout includes
+an `observability/loki/` directory "if you ship logs there." This build
+does not stand up Loki/Promtail. Every service already emits structured
+JSON to stdout (the gateway's async logger, see
+`gateway/internal/observability/logging.go`; Python services via their
+own JSON-capable loggers), which is queryable today with
+`docker compose logs -f gateway | jq .` and is what the smoke test
+(`scripts/smoke.sh`) actually asserts against. Standing up Loki adds a
+real piece of infrastructure (plus Promtail scrape config, plus a
+Grafana Loki datasource) whose only job in this build would be to
+re-display the same JSON lines `docker compose logs` already shows --
+not enough incremental value for this project's scope to justify the
+added moving part. A real production deployment of this system would
+want centralized log aggregation (Loki or otherwise); this is flagged as
+a follow-up in `docs/BUILD_SUMMARY.md`, not silently dropped.
