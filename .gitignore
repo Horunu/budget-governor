@@ -1,0 +1,35 @@
+# Go
+gateway/bin/
+gateway/*.test
+*.out
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Env
+.env
+.env.local
+
+# Data / logs
+*.log
+loadtest/results/*.json
+!loadtest/results/.gitkeep
+data/
+pgdata/
+redisdata/
+grafanadata/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
