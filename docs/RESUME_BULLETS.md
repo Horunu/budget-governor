@@ -24,7 +24,7 @@ five in action end-to-end.
 ### 3. "Implemented a reconciliation pipeline comparing gateway-observed spend against provider billing APIs, detecting and correcting drift."
 
 - Reconciliation job: [`reconciliation/job.py`](../reconciliation/job.py)
-- Provider usage/cost API clients (OpenAI, Anthropic — real endpoint shapes): [`reconciliation/providers/`](../reconciliation/providers)
+- Provider usage/cost API clients (OpenAI, Anthropic — real endpoint shapes): [`reconciliation/usage_providers/`](../reconciliation/usage_providers)
 - Drift detection + threshold logic + incident creation: [`reconciliation/job.py`](../reconciliation/job.py) (`detect_drift`), schema in [`migrations/0001_init.sql`](../migrations/0001_init.sql) (`reconciliation_runs`, `reconciliation_drift`)
 - Incidents surfaced via the control plane API: [`controlplane/app/api/incidents.py`](../controlplane/app/api/incidents.py) (`GET /v1/incidents`)
 - Tests covering exact match, drift within threshold, drift exceeding threshold: [`reconciliation/tests/test_job.py`](../reconciliation/tests/test_job.py)

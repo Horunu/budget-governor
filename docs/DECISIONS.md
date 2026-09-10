@@ -127,7 +127,7 @@ provider-billed spend runs as an independent, schedulable Python job
 **Context**: Provider billing/usage APIs are eventually consistent —
 OpenAI's and Anthropic's usage/cost reporting can lag real-time by hours,
 and cost data in particular can take up to 24h to settle (see the
-provider docs cited in `reconciliation/providers/`). Reconciliation is
+provider docs cited in `reconciliation/usage_providers/`). Reconciliation is
 therefore fundamentally a batch process over a trailing, *closed* time
 window (e.g. "yesterday, UTC"), not something that can run continuously
 against a still-open window without producing false-positive drift from
@@ -345,3 +345,18 @@ this production-ready (see `docs/BUILD_SUMMARY.md`). `scripts/migrate.py`
 and the running system always use the real `JSONB`/Postgres path in
 `migrations/0001_init.sql` — SQLite is a test-only substitution, never
 part of the deployed system.
+
+---
+
+## Note: `reconciliation/providers/` renamed to `reconciliation/usage_providers/`
+
+Layout deviation, not an ADR-worthy decision: the target repo layout
+names both the top-level `providers/` (shared pricing table, used by the
+advisor and reconciliation) and `reconciliation/providers/` (OpenAI/
+Anthropic billing-usage API clients) directory `providers`. Both are
+Python packages a service needs on `sys.path` simultaneously
+(`reconciliation/job.py` imports the pricing table AND the usage-API
+clients), so the identical name is a real import collision, not just a
+cosmetic one. `reconciliation/providers/` is renamed to
+`reconciliation/usage_providers/` to resolve it; the top-level
+`providers/` keeps the name the layout specifies.
