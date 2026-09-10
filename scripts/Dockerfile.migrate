@@ -1,0 +1,9 @@
+# Tiny one-shot image for scripts/migrate.py. Build context is the repo
+# root (see deploy/docker-compose.yml) so it can COPY both migrations/
+# and scripts/.
+FROM python:3.12-slim
+WORKDIR /app
+RUN pip install --no-cache-dir "psycopg[binary]>=3.1,<4"
+COPY migrations ./migrations
+COPY scripts/migrate.py ./scripts/migrate.py
+CMD ["python", "scripts/migrate.py"]

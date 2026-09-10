@@ -16,6 +16,8 @@ venv/
 # Env
 .env
 .env.local
+scripts/.seed_output.json
+scripts/.seed_output.env
 
 # Data / logs
 *.log
