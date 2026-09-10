@@ -264,3 +264,36 @@ already specified as the shared location.
 diffs (SQLAlchemy models in `controlplane/app/db/models.py` are kept in
 sync with the SQL by hand/review, not by `alembic revision --autogenerate`).
 For a schema this size, the trade is worth the simplicity.
+
+---
+
+## ADR-008: Pre-flight token estimation uses a calibrated heuristic, not a vendored BPE tokenizer
+
+**Decision**: `gateway/internal/provider.EstimateTokens` approximates token
+counts with a calibrated chars-per-token heuristic instead of a real
+byte-pair-encoding tokenizer (`tiktoken`'s `o200k_base`/`cl100k_base`, or
+Anthropic's equivalent).
+
+**Context**: Both vocabularies are shipped as downloadable rank-table
+files, not embedded in any Go/Python standard library — `tiktoken`
+(Python) and `tiktoken-go` fetch them from a remote blob store on first
+use unless you vendor multi-megabyte rank files yourself. This system's
+hard requirement is that it runs fully offline against the mock provider
+with no network dependency; a tokenizer that phones home on cold start
+(or silently falls back/breaks in an air-gapped container) would violate
+that. We evaluated vendoring the rank files directly into the Docker
+image, and rejected it because pre-flight estimation doesn't need
+byte-exact counts — only real usage numbers (from the provider's actual
+`usage` object, or the mock provider's deterministic simulation) are ever
+used for billing/metrics/reconciliation. The heuristic exists solely to
+decide, before the call is made, whether there's *probably* enough budget;
+see `internal/budget.Bucket.Reconcile` for how the estimate is corrected
+against the real number immediately after the call completes.
+
+**Cost of this choice**: the pre-flight reservation can be off by roughly
++/-15% versus a real tokenizer on English prose, more on code-heavy or
+non-English input. Because the bucket is reconciled to the actual usage
+right after the call (refunding an over-estimate or, on hard budget
+exhaustion mid-stream, the actual metered amount is still what's recorded
+to `spend_events`), this only affects how conservatively we admit
+borderline requests — never the accuracy of what's actually billed.
