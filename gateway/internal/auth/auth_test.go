@@ -16,13 +16,17 @@ func testLogger() *slog.Logger {
 
 func TestParseScopes(t *testing.T) {
 	cases := map[string]map[Scope]bool{
-		"{admin}":       {ScopeAdmin: true},
-		"{admin,agent}": {ScopeAdmin: true, ScopeAgent: true},
-		"{viewer}":      {ScopeViewer: true},
-		"{}":            {},
+		`["admin"]`:         {ScopeAdmin: true},
+		`["admin","agent"]`: {ScopeAdmin: true, ScopeAgent: true},
+		`["viewer"]`:        {ScopeViewer: true},
+		`[]`:                {},
 	}
 	for input, want := range cases {
-		got := parseScopes(input)
+		got, err := parseScopes([]byte(input))
+		if err != nil {
+			t.Errorf("parseScopes(%q) unexpected error: %v", input, err)
+			continue
+		}
 		if len(got) != len(want) {
 			t.Errorf("parseScopes(%q) = %v, want %v", input, got, want)
 			continue
@@ -49,7 +53,7 @@ func TestStore_Authenticate_CacheMissQueriesDBAndVerifies(t *testing.T) {
 	}
 
 	rows := sqlmock.NewRows([]string{"id", "tenant_id", "key_prefix", "hashed_key", "scopes", "revoked_at"}).
-		AddRow("key-1", "tenant-acme", rawKey[:keyPrefixLen], hashed, "{admin}", nil)
+		AddRow("key-1", "tenant-acme", rawKey[:keyPrefixLen], hashed, `["admin"]`, nil)
 	mock.ExpectQuery("SELECT id, tenant_id, key_prefix, hashed_key, scopes, revoked_at").
 		WithArgs(rawKey[:keyPrefixLen]).
 		WillReturnRows(rows)
@@ -84,7 +88,7 @@ func TestStore_Authenticate_CacheHitSkipsDB(t *testing.T) {
 	}
 
 	rows := sqlmock.NewRows([]string{"id", "tenant_id", "key_prefix", "hashed_key", "scopes", "revoked_at"}).
-		AddRow("key-2", "tenant-beta", rawKey[:keyPrefixLen], hashed, "{agent}", nil)
+		AddRow("key-2", "tenant-beta", rawKey[:keyPrefixLen], hashed, `["agent"]`, nil)
 	// Expect exactly ONE query -- the second Authenticate call must be
 	// served entirely from cache.
 	mock.ExpectQuery("SELECT id, tenant_id, key_prefix, hashed_key, scopes, revoked_at").

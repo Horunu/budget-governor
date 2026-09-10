@@ -107,7 +107,7 @@ func issueKey(t *testing.T, mock sqlmock.Sqlmock, tenantID string, scopes string
 	}
 	prefix := rawKey[:12]
 	rows := sqlmock.NewRows([]string{"id", "tenant_id", "key_prefix", "hashed_key", "scopes", "revoked_at"}).
-		AddRow("key-"+tenantID, tenantID, prefix, hashed, "{"+scopes+"}", nil)
+		AddRow("key-"+tenantID, tenantID, prefix, hashed, `["`+scopes+`"]`, nil)
 	mock.ExpectQuery("SELECT id, tenant_id, key_prefix, hashed_key, scopes, revoked_at").
 		WithArgs(prefix).
 		WillReturnRows(rows)

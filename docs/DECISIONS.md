@@ -297,3 +297,51 @@ right after the call (refunding an over-estimate or, on hard budget
 exhaustion mid-stream, the actual metered amount is still what's recorded
 to `spend_events`), this only affects how conservatively we admit
 borderline requests — never the accuracy of what's actually billed.
+
+---
+
+## ADR-009: `api_keys.scopes` is JSON, not a native Postgres array; control-plane tests run against SQLite
+
+**Decision**: `migrations/0001_init.sql` stores `api_keys.scopes` as
+`JSONB` (a JSON array of scope strings, e.g. `["admin","agent"]`) rather
+than Postgres's native `TEXT[]`. The Go gateway (`internal/auth`) decodes
+it with `encoding/json`; the control plane's SQLAlchemy models
+(`controlplane/app/db/models.py`) declare it as a generic `JSON` column.
+Separately, `controlplane/tests/` runs against an in-memory SQLite
+database (via `aiosqlite`), created fresh per test from the same ORM
+models, rather than against Postgres.
+
+**Context**: This build environment has no Docker daemon available (only
+the CLI is installed, `docker` commands fail with "cannot connect to the
+Docker daemon"), so there is no way to run a real Postgres instance for
+integration tests here. Rather than skip control-plane test coverage
+entirely, or reach for a mocked-repository abstraction layer that
+wouldn't exercise real query logic, the schema is kept portable enough
+that SQLite can stand in for Postgres in tests: `JSON` works natively on
+both engines (Postgres additionally as `JSONB`), whereas `TEXT[]` is
+Postgres-only and has no SQLite equivalent, which would force either two
+diverging schemas or a mocked DB layer. Primary keys that need
+auto-increment (`spend_events.id`, `reconciliation_runs.id`,
+`reconciliation_drift.id`) use `BigInteger().with_variant(Integer,
+"sqlite")` for the same reason -- SQLite only auto-increments a bare
+`INTEGER PRIMARY KEY` (its rowid alias), not a `BIGINT` one.
+
+**Alternative considered**: keep `TEXT[]` and mock the database layer
+entirely for tests (a repository interface with an in-memory fake).
+Rejected because it would mean the tests verify the *fake's* behavior,
+not the actual SQL the control plane generates and runs — exactly the
+kind of bug (a bad `WHERE` clause, a wrong `GROUP BY`, an incorrect join)
+integration tests exist to catch. A real embedded database, even a
+different engine than production, catches far more than a hand-written
+fake ever would.
+
+**Cost of this choice**: SQLite and Postgres aren't identical --
+constraint enforcement, date/time handling, and JSON query operators
+differ at the margins. The test suite therefore proves the control
+plane's query *logic* (filtering, aggregation, scope enforcement) is
+correct, but is not a substitute for running the real stack via `docker
+compose up` + `make smoke` against actual Postgres before considering
+this production-ready (see `docs/BUILD_SUMMARY.md`). `scripts/migrate.py`
+and the running system always use the real `JSONB`/Postgres path in
+`migrations/0001_init.sql` — SQLite is a test-only substitution, never
+part of the deployed system.

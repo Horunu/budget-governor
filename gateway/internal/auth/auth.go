@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"sync"
@@ -140,59 +141,39 @@ func (s *Store) lookupAndVerify(ctx context.Context, rawKey string) (Identity, e
 
 	for rows.Next() {
 		var rec keyRecord
-		var scopesRaw string // Postgres text[] array literal, e.g. "{admin,agent}"
+		var scopesRaw []byte // JSONB array, e.g. ["admin","agent"]
 		if err := rows.Scan(&rec.ID, &rec.TenantID, &rec.KeyPrefix, &rec.HashedKey, &scopesRaw, &rec.RevokedAt); err != nil {
 			return Identity{}, err
 		}
 		if bcrypt.CompareHashAndPassword([]byte(rec.HashedKey), []byte(rawKey)) == nil {
+			scopes, err := parseScopes(scopesRaw)
+			if err != nil {
+				return Identity{}, err
+			}
 			return Identity{
 				TenantID: rec.TenantID,
 				KeyID:    rec.ID,
-				Scopes:   parseScopes(scopesRaw),
+				Scopes:   scopes,
 			}, nil
 		}
 	}
 	return Identity{}, ErrKeyNotFound
 }
 
-// parseScopes parses a Postgres text[] array literal (e.g. "{admin,agent}")
-// without pulling in a driver-specific array type, since the gateway only
-// needs this one read path.
-func parseScopes(pgArray string) map[Scope]bool {
-	out := make(map[Scope]bool)
-	cur := ""
-	flush := func() {
-		cur = trimBraces(cur)
-		if cur != "" {
-			out[Scope(cur)] = true
-		}
-		cur = ""
+// parseScopes decodes a JSONB scopes array (e.g. ["admin","agent"]) as
+// stored by the control plane -- see migrations/0001_init.sql for why
+// this is JSON rather than a native Postgres array (cross-dialect
+// portability with the control plane's SQLite-backed test suite).
+func parseScopes(raw []byte) (map[Scope]bool, error) {
+	var list []string
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return nil, err
 	}
-	for _, r := range pgArray {
-		switch r {
-		case '{', '}':
-			// handled by trimBraces per-token; keep in cur so first/last
-			// token still trims correctly.
-			cur += string(r)
-		case ',':
-			flush()
-		default:
-			cur += string(r)
-		}
+	out := make(map[Scope]bool, len(list))
+	for _, s := range list {
+		out[Scope(s)] = true
 	}
-	flush()
-	return out
-}
-
-func trimBraces(s string) string {
-	start, end := 0, len(s)
-	for start < end && (s[start] == '{' || s[start] == '}' || s[start] == ' ' || s[start] == '"') {
-		start++
-	}
-	for end > start && (s[end-1] == '{' || s[end-1] == '}' || s[end-1] == ' ' || s[end-1] == '"') {
-		end--
-	}
-	return s[start:end]
+	return out, nil
 }
 
 // RunRefreshLoop periodically drops expired entries so a revoked key

@@ -32,12 +32,26 @@ CREATE TABLE agents (
 -- the raw key in plaintext, indexed, so the gateway's auth lookup narrows
 -- to (usually) one row before the O(1) bcrypt verify instead of scanning
 -- every active key. See docs/DECISIONS.md ADR-005.
+-- scopes is stored as a JSON array (e.g. ["admin","agent"]) rather than a
+-- native Postgres TEXT[] so the exact same column shape is portable to
+-- SQLite in the control plane's test suite (see
+-- controlplane/app/db/models.py) -- JSON is natively supported by both,
+-- whereas TEXT[] is Postgres-only. The gateway's Go auth reader
+-- (internal/auth) parses it with encoding/json accordingly.
+-- agent_id is set only for scope=["agent"] keys minted by
+-- POST /v1/agents (one key per agent, returned once at registration
+-- time) -- it lets the control plane's spend-query endpoint enforce
+-- "agent scope can read its own data only" without the gateway needing
+-- it at all (the gateway instead takes agent_id from the client-supplied
+-- X-Agent-Id header on each proxied call; see gateway/internal/auth,
+-- which deliberately does not select this column).
 CREATE TABLE api_keys (
     id         TEXT PRIMARY KEY DEFAULT ('key_' || replace(gen_random_uuid()::text, '-', '')),
     tenant_id  TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    agent_id   TEXT REFERENCES agents(id) ON DELETE CASCADE,
     key_prefix TEXT NOT NULL,
     hashed_key TEXT NOT NULL,
-    scopes     TEXT[] NOT NULL,
+    scopes     JSONB NOT NULL,
     label      TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     revoked_at TIMESTAMPTZ
