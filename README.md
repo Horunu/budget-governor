@@ -1,10 +1,22 @@
 # Budget Governor
 
-A multi-tenant LLM-call gateway that enforces per-tenant, per-agent, and
-per-task token/dollar budgets in real time — with an LLM-as-advisor cost
-optimizer gated by a deterministic policy engine, a drift-detecting
-reconciliation pipeline against provider billing, and a full observability
-stack that alerts before the bill arrives, not after.
+Budget Governor sits between your AI agents and the LLM providers they call
+(OpenAI, Anthropic) and stops them from spending more money than you allowed.
+
+Every request goes through it first. It checks how much budget the tenant,
+the agent, and the task have left. If there is enough, it forwards the call
+and records what was actually spent. If there is not, it blocks the call and
+returns a 429 instead of letting the bill grow.
+
+It also:
+
+* suggests cheaper ways to make the call when a budget is running low
+* compares its own spend numbers against the provider's billing API to catch
+  drift
+* ships dashboards and alerts that warn you while you are overspending, not
+  after the invoice arrives
+
+## How it fits together
 
 ```mermaid
 flowchart LR
@@ -23,12 +35,27 @@ flowchart LR
     Postgres -->|"custom query"| PGExporter["postgres_exporter"] --> Prometheus
 ```
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design
-(including a per-request sequence diagram, failure modes, and scaling
-notes), [`docs/DECISIONS.md`](docs/DECISIONS.md) for the engineering
-rationale behind every major choice, and
-[`docs/BUILD_SUMMARY.md`](docs/BUILD_SUMMARY.md) for exactly what's
-been verified versus what's a documented, bounded gap.
+In words:
+
+1. **Gateway (Go)** is the piece on the request path. It checks the API key,
+   estimates the cost, asks Redis whether there is budget left, forwards the
+   call to the provider, and writes the real cost down afterwards.
+2. **Redis** holds the token buckets. A small Lua script does the
+   check-and-subtract in one atomic step, so many gateway instances can share
+   the same budget safely.
+3. **Postgres** is the system of record: tenants, agents, keys, budgets, and
+   one row per call in `spend_events`.
+4. **Control plane (FastAPI)** is the admin API where you create tenants,
+   agents, API keys, and budgets, and where you query spend.
+5. **Cost advisor (Python)** is only called when a request is about to be
+   throttled. It asks an LLM for cheaper alternatives. Its answers are
+   suggestions only. A deterministic policy engine in the gateway decides
+   what actually happens, so an LLM never gets to approve spending.
+6. **Reconciliation job (Python)** runs on a schedule, pulls the provider's
+   own usage and cost numbers, compares them to what the gateway recorded,
+   and files an incident if the gap is too big.
+7. **Prometheus and Grafana** collect the metrics and show three
+   pre-built dashboards, plus burn-rate and drift alerts.
 
 ## Quickstart
 
@@ -37,99 +64,112 @@ git clone <this-repo>
 cd budget-governor
 cp .env.example .env
 
-make up          # docker compose up -d --build: postgres, redis, gateway,
-                  # control plane, advisor, reconciliation, prometheus, grafana
-make seed        # creates 3 demo tenants/agents/budgets, prints API keys
-make smoke       # end-to-end: allowed calls, budget exhaustion, advisor
-                  # firing, reconciliation, pass/fail summary
-make bench       # k6 fan-out load test: 5,000+ req/s, p50/p95/p99, cost attribution
+make up          # start everything with docker compose
+make seed        # create 3 demo tenants/agents/budgets, print their API keys
+make smoke       # run an end-to-end check and print pass/fail
+make bench       # k6 load test: 5,000+ req/s, p50/p95/p99, cost attribution
 ```
 
-Then open **Grafana** at http://localhost:3000 (`admin`/`admin`) — three
-dashboards ("Tenant Overview", "Gateway Health", "Reconciliation Drift")
-are already provisioned. Prometheus is at http://localhost:9091.
+Then open **Grafana** at http://localhost:3000 (`admin` / `admin`). The
+"Tenant Overview", "Gateway Health", and "Reconciliation Drift" dashboards
+are already set up. Prometheus is at http://localhost:9091.
 
-### Running without API keys
+Other useful targets: `make down`, `make logs`, `make test`.
 
-This is the default. Every request whose `model` starts with `mock-`
-(and, out of the box, every seeded demo agent) is served by the
-deterministic **Mock provider** (`gateway/internal/provider/mock.go`):
-realistic variable latency (50–500ms), input-length-dependent token
-counts, and real pricing-table-driven cost calculation — with zero
-network calls. `ADVISOR_LLM_PROVIDER=mock` (the default) does the same
-for the cost advisor, and `reconciliation`'s `MockUsageProvider`
-deterministically derives plausible "provider-reported" spend from the
-gateway's own observed numbers so the reconciliation pipeline and its
-drift-detection alerting have something real to demonstrate. See
-`docs/DECISIONS.md`'s ADR-008 and the module docstrings in
-`gateway/internal/provider/mock.go`, `advisor/app/llm_client.py`, and
-`reconciliation/usage_providers/mock_usage.py` for how each mock is
-designed to be realistic rather than a stub.
+## You do not need API keys to try it
 
-### Running with real providers
+Running without provider keys is the default, and it still does something
+real. Any request whose `model` starts with `mock-` (which includes every
+seeded demo agent) is handled by a built-in mock provider with variable
+latency of 50 to 500ms, token counts that depend on input length, and cost
+math driven by the real pricing table. No network calls happen.
 
-Set in `.env` (see `.env.example` for the full annotated list):
+The other two mocks work the same way. `ADVISOR_LLM_PROVIDER=mock` (the
+default) gives the advisor canned but sensible suggestions, and the
+reconciliation job's `MockUsageProvider` derives plausible
+"provider-reported" spend from the gateway's own numbers so drift detection
+has something to detect.
+
+The relevant files are `gateway/internal/provider/mock.go`,
+`advisor/app/llm_client.py`, and
+`reconciliation/usage_providers/mock_usage.py`. ADR-008 in
+`docs/DECISIONS.md` explains why the mocks are realistic rather than stubs.
+
+## Using real providers
+
+Put your keys in `.env` (`.env.example` lists every option with comments):
 
 ```bash
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-Any request with `model: "gpt-4o"`, `"claude-sonnet-5"`, etc. is routed
-to the real provider automatically (`gateway/internal/proxy/router.go`
-selects by model-name prefix — no other config needed). For
-reconciliation against real provider billing, also set
-`OPENAI_ADMIN_KEY` / `ANTHROPIC_ADMIN_KEY` (organization-scoped admin
-keys, distinct from regular inference keys — see
-`reconciliation/usage_providers/`). For the advisor to call a real LLM
-instead of its deterministic mock, set `ADVISOR_LLM_PROVIDER=openai` or
-`anthropic`.
+Routing is automatic. A request for `gpt-4o` or `claude-sonnet-5` goes to the
+matching provider because `gateway/internal/proxy/router.go` picks by model
+name prefix. There is nothing else to configure.
 
-**Before relying on this for real budget decisions**, re-verify the
-pricing tables (`gateway/internal/provider/pricing.go`,
-`providers/pricing.py`) against each provider's current pricing page —
-they're dated (verification date in the file header), not live-fetched,
-by design.
+Two extras, if you want them:
+
+* To reconcile against real billing, also set `OPENAI_ADMIN_KEY` and
+  `ANTHROPIC_ADMIN_KEY`. These are organization-scoped admin keys, which are
+  not the same as your normal inference keys. See
+  `reconciliation/usage_providers/`.
+* To let the advisor call a real LLM, set `ADVISOR_LLM_PROVIDER=openai` or
+  `anthropic`.
+
+> **Check the prices before trusting this with real money.** The pricing
+> tables in `gateway/internal/provider/pricing.go` and `providers/pricing.py`
+> are hand-maintained and dated in the file header, not fetched live. That is
+> deliberate, but it means you should compare them against each provider's
+> current pricing page first.
 
 ## Repo layout
 
-| Path | What |
+| Path | What is in it |
 |---|---|
-| `gateway/` | Go hot path: auth, budget enforcement, provider proxy, streaming, policy engine |
-| `controlplane/` | Python/FastAPI: tenants, agents, API keys, budgets, spend queries, incidents |
-| `advisor/` | Python/FastAPI: the LLM-as-advisor cost optimizer |
-| `reconciliation/` | Python: scheduled drift detection vs. provider billing |
-| `providers/` | Shared pricing table (Python), used by advisor + reconciliation |
+| `gateway/` | Go request path: auth, budget enforcement, provider proxy, streaming, policy engine |
+| `controlplane/` | Python/FastAPI admin API: tenants, agents, API keys, budgets, spend queries, incidents |
+| `advisor/` | Python/FastAPI cost optimizer that suggests cheaper calls |
+| `reconciliation/` | Python scheduled job that compares spend against provider billing |
+| `providers/` | Shared pricing table (Python), used by the advisor and reconciliation |
 | `migrations/` | Shared SQL schema, applied by `scripts/migrate.py` |
-| `observability/` | Prometheus scrape configs + alert rules, Grafana dashboards |
+| `observability/` | Prometheus scrape configs and alert rules, Grafana dashboards |
 | `loadtest/` | k6 load test scripts |
 | `scripts/` | seed / smoke / benchmark / migrate |
 | `deploy/` | `docker-compose.yml` |
-| `docs/` | Architecture, decisions, runbook, resume-bullet map, build summary |
+| `docs/` | Architecture, decisions, runbook, resume bullet map, build summary |
 
-## The five resume bullets, and where they live
+## Docs
 
-1. **"Designed and implemented a multi-tenant LLM-call gateway enforcing
-   per-tenant, per-agent, and per-task token budgets with sub-10ms p99
-   overhead."** → `gateway/internal/budget/`, `gateway/internal/auth/`,
-   proven by `loadtest/fanout_burst.js` via `make bench`.
-2. **"Built a distributed token-bucket enforcement layer validated under
-   5,000+ req/sec simulated agent fan-out load."** →
+* [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): the full design, with a
+  per-request sequence diagram, failure modes, and scaling notes.
+* [`docs/DECISIONS.md`](docs/DECISIONS.md): why each major choice was made.
+* [`docs/BUILD_SUMMARY.md`](docs/BUILD_SUMMARY.md): what has been verified
+  and what is a known, bounded gap.
+* [`docs/RUNBOOK.md`](docs/RUNBOOK.md): operating it.
+* [`docs/RESUME_BULLETS.md`](docs/RESUME_BULLETS.md): each resume claim
+  mapped to the file and line that backs it.
+
+## Where each resume bullet lives
+
+1. **Multi-tenant LLM-call gateway enforcing per-tenant, per-agent, and
+   per-task token budgets with sub-10ms p99 overhead.**
+   `gateway/internal/budget/`, `gateway/internal/auth/`, measured by
+   `loadtest/fanout_burst.js` via `make bench`.
+2. **Distributed token-bucket enforcement layer validated above 5,000
+   req/sec of simulated agent fan-out.**
    `gateway/internal/budget/checkAndDecrement.lua`, concurrency-tested in
    `bucket_test.go`, load-tested in `loadtest/fanout_burst.js`.
-3. **"Implemented a reconciliation pipeline comparing gateway-observed
-   spend against provider billing APIs, detecting and correcting
-   drift."** → `reconciliation/job.py`, `reconciliation/usage_providers/`.
-4. **"Designed an LLM-as-advisor cost-optimization feature with a
-   deterministic policy engine gating all decisions."** → `advisor/app/`
-   + `gateway/internal/policy/` (the actual decision-maker).
-5. **"Shipped a full observability stack ... with alerts that fire
-   before overspend, not after the bill."** →
-   `gateway/internal/observability/`, `observability/prometheus/alerts.yml`
-   (see `BurnRateHigh`), `observability/grafana/dashboards/`.
-
-Full detail, with exact file/line-level pointers per bullet, in
-[`docs/RESUME_BULLETS.md`](docs/RESUME_BULLETS.md).
+3. **Reconciliation pipeline comparing gateway-observed spend against
+   provider billing APIs, detecting and correcting drift.**
+   `reconciliation/job.py`, `reconciliation/usage_providers/`.
+4. **LLM-as-advisor cost optimization with a deterministic policy engine
+   gating every decision.** `advisor/app/` plus `gateway/internal/policy/`,
+   which is the part that actually decides.
+5. **Observability stack with alerts that fire before overspend, not after
+   the bill.** `gateway/internal/observability/`,
+   `observability/prometheus/alerts.yml` (see `BurnRateHigh`),
+   `observability/grafana/dashboards/`.
 
 ## License
 
