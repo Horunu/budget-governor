@@ -1,4 +1,4 @@
-.PHONY: up down build logs migrate seed smoke bench test test-gateway test-controlplane test-advisor test-reconciliation clean
+.PHONY: up down build logs migrate seed smoke demo bench test test-gateway test-controlplane test-advisor test-reconciliation clean
 
 COMPOSE := docker compose -f deploy/docker-compose.yml
 
@@ -29,6 +29,9 @@ seed:
 
 smoke:
 	bash scripts/smoke.sh
+
+demo:
+	bash scripts/demo.sh
 
 bench:
 	bash scripts/benchmark.sh
