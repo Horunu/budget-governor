@@ -8,9 +8,13 @@ from app.llm_client import AnthropicAdvisorClient, HTTPLLMClient, LLMClient, Moc
 def build_llm_client() -> LLMClient:
     """Selects the advisor's LLM backend from ADVISOR_LLM_PROVIDER
     ("mock" | "openai" | "anthropic"; defaults to "mock" so the whole
-    system runs with no API keys). See .env.example for the full set of
-    variables this reads.
+    system runs with no API keys). Set DEMO_MODE=true to force the mock
+    client regardless of ADVISOR_LLM_PROVIDER — safe for demos without
+    any API keys. See .env.example for the full set of variables.
     """
+    if os.environ.get("DEMO_MODE", "").lower() in ("1", "true", "yes"):
+        return MockLLMClient()
+
     provider = os.environ.get("ADVISOR_LLM_PROVIDER", "mock").lower()
 
     if provider == "openai":
