@@ -11,6 +11,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:8080}"
+GATEWAY_METRICS_URL="${GATEWAY_METRICS_URL:-http://localhost:9090}"
 CONTROLPLANE_URL="${CONTROLPLANE_URL:-http://localhost:8081}"
 ADVISOR_URL="${ADVISOR_URL:-http://localhost:8082}"
 
@@ -34,6 +35,9 @@ echo "=== 3. Seeding demo tenants/agents/budgets ==="
 python3 scripts/seed.py --controlplane-url "$CONTROLPLANE_URL"
 # shellcheck disable=SC1091
 source scripts/.seed_output.env
+# Wait for the gateway's budget config cache to refresh (BUDGET_CACHE_TTL_SECONDS=5 default).
+echo "  Waiting 6s for gateway config cache refresh..."
+sleep 6
 
 echo "=== 4. Making allowed LLM calls through the gateway (mock provider) ==="
 RESP=$(curl -sS -w '\n%{http_code}' -X POST "$GATEWAY_URL/v1/chat/completions" \
@@ -67,8 +71,7 @@ else
 fi
 
 echo "=== 6. Verifying metric emission ==="
-if curl -sS "$GATEWAY_URL:9090/metrics" 2>/dev/null | grep -q 'budget_governor_gateway_requests_total' \
-  || curl -sS "http://localhost:9090/metrics" | grep -q 'budget_governor_gateway_requests_total'; then
+if curl -sS "$GATEWAY_METRICS_URL/metrics" 2>/dev/null | grep -q 'budget_governor_gateway_requests_total'; then
   pass "gateway /metrics exposes budget_governor_gateway_requests_total"
 else
   fail "gateway /metrics did not expose expected counters"
