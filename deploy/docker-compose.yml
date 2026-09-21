@@ -53,8 +53,8 @@ services:
       GATEWAY_METRICS_ADDR: ":9090"
       ADVISOR_URL: "http://advisor:8082"
       ADVISOR_TIMEOUT_MS: ${ADVISOR_TIMEOUT_MS:-300}
-      AUTH_CACHE_TTL_SECONDS: ${AUTH_CACHE_TTL_SECONDS:-60}
-      BUDGET_CACHE_TTL_SECONDS: ${BUDGET_CACHE_TTL_SECONDS:-30}
+      AUTH_CACHE_TTL_SECONDS: ${AUTH_CACHE_TTL_SECONDS:-5}
+      BUDGET_CACHE_TTL_SECONDS: ${BUDGET_CACHE_TTL_SECONDS:-5}
       MOCK_PROVIDER_LATENCY_MIN_MS: ${MOCK_PROVIDER_LATENCY_MIN_MS:-50}
       MOCK_PROVIDER_LATENCY_MAX_MS: ${MOCK_PROVIDER_LATENCY_MAX_MS:-500}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -64,6 +64,11 @@ services:
     ports:
       - "8080:8080"
       - "9090:9090"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
     depends_on:
       postgres:
         condition: service_healthy
@@ -80,6 +85,11 @@ services:
       PLATFORM_BOOTSTRAP_TOKEN: ${PLATFORM_BOOTSTRAP_TOKEN:-dev-only-change-me}
     ports:
       - "8081:8081"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/v1/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
     depends_on:
       postgres:
         condition: service_healthy
@@ -92,6 +102,7 @@ services:
       dockerfile: advisor/Dockerfile
     environment:
       ADVISOR_LLM_PROVIDER: ${ADVISOR_LLM_PROVIDER:-mock}
+      DEMO_MODE: ${DEMO_MODE:-true}
       ADVISOR_OPENAI_MODEL: ${ADVISOR_OPENAI_MODEL:-gpt-4o-mini}
       ADVISOR_ANTHROPIC_MODEL: ${ADVISOR_ANTHROPIC_MODEL:-claude-haiku-4-5}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -100,6 +111,11 @@ services:
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com/v1}
     ports:
       - "8082:8082"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8082/v1/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
 
   reconciliation:
     build:
