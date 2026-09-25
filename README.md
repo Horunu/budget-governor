@@ -67,6 +67,7 @@ cp .env.example .env
 make up          # start everything with docker compose
 make seed        # create 3 demo tenants/agents/budgets, print their API keys
 make smoke       # run an end-to-end check and print pass/fail
+make demo        # walk one agent through allow, throttle, reroute, spend
 make bench       # k6 load test: 5,000+ req/s, p50/p95/p99, cost attribution
 ```
 
@@ -137,39 +138,28 @@ Two extras, if you want them:
 | `loadtest/` | k6 load test scripts |
 | `scripts/` | seed / smoke / benchmark / migrate |
 | `deploy/` | `docker-compose.yml` |
-| `docs/` | Architecture, decisions, runbook, resume bullet map, build summary |
+| `docs/` | Architecture, decisions, runbook |
 
 ## Docs
 
 * [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): the full design, with a
   per-request sequence diagram, failure modes, and scaling notes.
 * [`docs/DECISIONS.md`](docs/DECISIONS.md): why each major choice was made.
-* [`docs/BUILD_SUMMARY.md`](docs/BUILD_SUMMARY.md): what has been verified
-  and what is a known, bounded gap.
 * [`docs/RUNBOOK.md`](docs/RUNBOOK.md): operating it.
-* [`docs/RESUME_BULLETS.md`](docs/RESUME_BULLETS.md): each resume claim
-  mapped to the file and line that backs it.
 
-## Where each resume bullet lives
+## Where to look
 
-1. **Multi-tenant LLM-call gateway enforcing per-tenant, per-agent, and
-   per-task token budgets with sub-10ms p99 overhead.**
-   `gateway/internal/budget/`, `gateway/internal/auth/`, measured by
-   `loadtest/fanout_burst.js` via `make bench`.
-2. **Distributed token-bucket enforcement layer validated above 5,000
-   req/sec of simulated agent fan-out.**
-   `gateway/internal/budget/checkAndDecrement.lua`, concurrency-tested in
-   `bucket_test.go`, load-tested in `loadtest/fanout_burst.js`.
-3. **Reconciliation pipeline comparing gateway-observed spend against
-   provider billing APIs, detecting and correcting drift.**
-   `reconciliation/job.py`, `reconciliation/usage_providers/`.
-4. **LLM-as-advisor cost optimization with a deterministic policy engine
-   gating every decision.** `advisor/app/` plus `gateway/internal/policy/`,
-   which is the part that actually decides.
-5. **Observability stack with alerts that fire before overspend, not after
-   the bill.** `gateway/internal/observability/`,
-   `observability/prometheus/alerts.yml` (see `BurnRateHigh`),
-   `observability/grafana/dashboards/`.
+* **Budget enforcement:** `gateway/internal/budget/` and the Lua script
+  `checkAndDecrement.lua`. Concurrency tests are in `bucket_test.go`; load
+  tests are in `loadtest/fanout_burst.js` (`make bench`).
+* **Auth:** `gateway/internal/auth/` on the request path,
+  `controlplane/app/auth/` for the admin API.
+* **Advisor and policy:** `advisor/app/` makes suggestions,
+  `gateway/internal/policy/` decides.
+* **Reconciliation:** `reconciliation/job.py` and
+  `reconciliation/usage_providers/`.
+* **Alerts and dashboards:** `observability/prometheus/alerts.yml` (see
+  `BurnRateHigh`) and `observability/grafana/dashboards/`.
 
 ## License
 

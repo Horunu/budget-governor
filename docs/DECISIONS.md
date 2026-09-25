@@ -341,7 +341,7 @@ differ at the margins. The test suite therefore proves the control
 plane's query *logic* (filtering, aggregation, scope enforcement) is
 correct, but is not a substitute for running the real stack via `docker
 compose up` + `make smoke` against actual Postgres before considering
-this production-ready (see `docs/BUILD_SUMMARY.md`). `scripts/migrate.py`
+this production-ready. `scripts/migrate.py`
 and the running system always use the real `JSONB`/Postgres path in
 `migrations/0001_init.sql` — SQLite is a test-only substitution, never
 part of the deployed system.
@@ -378,5 +378,4 @@ Grafana Loki datasource) whose only job in this build would be to
 re-display the same JSON lines `docker compose logs` already shows --
 not enough incremental value for this project's scope to justify the
 added moving part. A real production deployment of this system would
-want centralized log aggregation (Loki or otherwise); this is flagged as
-a follow-up in `docs/BUILD_SUMMARY.md`, not silently dropped.
+want centralized log aggregation (Loki or otherwise).

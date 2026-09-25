@@ -141,8 +141,7 @@ what we control). Within the gateway:
   (see `docs/DECISIONS.md`).
 - **Control plane**: read-heavy (spend queries); the `spend_events` table
   is indexed on `(tenant_id, created_at)` and is a natural candidate for
-  monthly partitioning once volume warrants it (not implemented in this
-  build — noted as a follow-up in `docs/BUILD_SUMMARY.md`).
+  monthly partitioning once volume warrants it (not implemented yet).
 - **Advisor**: stateless, called at low volume by construction (only on
   budget pressure), so it is not a scaling concern in practice.
 - **Reconciliation**: scheduled, batch-oriented; scales by time-window

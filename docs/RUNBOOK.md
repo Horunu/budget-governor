@@ -79,8 +79,7 @@ deployment) an account/workspace mapping error in `tenants.openai_org_id`
    pre-flight budget checks was imprecise for this tenant's traffic
    shape.
 4. Once understood, resolve the incident (`resolved_at` is set via a
-   direct update today — a `PATCH /v1/incidents/{id}/resolve` endpoint is
-   a natural follow-up, see `docs/BUILD_SUMMARY.md`).
+   direct update today; there is no resolve endpoint yet).
 
 ### GatewayLatencyHigh
 
@@ -163,6 +162,5 @@ edge cases.
    `anthropic.go` for a malformed-request regression.
 4. If sustained, consider whether the affected provider's traffic should
    be temporarily routed to the alternate provider (a policy-engine-
-   level decision, not currently automated — see
-   `docs/BUILD_SUMMARY.md` for this as a documented follow-up) or to the
+   level decision, not currently automated) or to the
    mock provider for non-critical/demo tenants.

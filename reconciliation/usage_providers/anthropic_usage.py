@@ -29,7 +29,7 @@ decimal USD strings; this client parses them as float.
 Note: Priority Tier spend is excluded from this endpoint per Anthropic's
 own docs -- a tenant using Priority Tier would need the usage endpoint's
 service_tier=priority filter added to fully reconcile. Not implemented
-here; see docs/BUILD_SUMMARY.md for the list of documented gaps.
+here.
 """
 
 from __future__ import annotations

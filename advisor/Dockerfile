@@ -13,6 +13,5 @@ EXPOSE 8082
 # specifically so Python prepends the working directory (/app) to
 # sys.path, making the providers/ package copied in above importable --
 # the installed console-script's own location otherwise would not put
-# /app on sys.path. See docs/BUILD_SUMMARY.md if this ever needs
-# revisiting for a proper installable package instead.
+# /app on sys.path.
 CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8082"]
