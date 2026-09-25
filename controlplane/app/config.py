@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,21 +30,20 @@ class Settings(BaseSettings):
 
     @property
     def async_postgres_dsn(self) -> str:
-        """The same DSN, qualified for SQLAlchemy's async driver.
-
-        Kept as a derived property (rather than asking every deployer to
-        set a second, asyncpg-specific env var) so .env.example only
-        needs one POSTGRES_DSN that every service -- Go and Python alike
-        -- can point at.
-        """
+        """POSTGRES_DSN rewritten for SQLAlchemy's asyncpg driver, so every
+        service can share one env var."""
         dsn = self.postgres_dsn
-        if dsn.startswith("postgresql+asyncpg://"):
+        for prefix in ("postgresql://", "postgres://"):
+            if dsn.startswith(prefix):
+                dsn = "postgresql+asyncpg://" + dsn[len(prefix):]
+                break
+        if not dsn.startswith("postgresql+asyncpg://"):
             return dsn
-        if dsn.startswith("postgresql://"):
-            return "postgresql+asyncpg://" + dsn[len("postgresql://") :]
-        if dsn.startswith("postgres://"):
-            return "postgresql+asyncpg://" + dsn[len("postgres://") :]
-        return dsn
+
+        # asyncpg rejects libpq's sslmode parameter, which the Go gateway needs.
+        parsed = urlsplit(dsn)
+        query = [(k, v) for k, v in parse_qsl(parsed.query) if k != "sslmode"]
+        return urlunsplit(parsed._replace(query=urlencode(query)))
 
 
 def get_settings() -> Settings:
