@@ -1,0 +1,17 @@
+# Sends every Prometheus alert to one Slack channel.
+# Put your Slack incoming-webhook URL in observability/alertmanager/slack_webhook
+# (gitignored). Without it, alerts still show at http://localhost:9093 and
+# Alertmanager logs a failed send.
+route:
+  receiver: slack
+  group_by: [alertname, team, member]
+  group_wait: 30s
+  repeat_interval: 4h
+
+receivers:
+  - name: slack
+    slack_configs:
+      - api_url_file: /etc/alertmanager/slack_webhook
+        send_resolved: true
+        title: '{{ .CommonAnnotations.summary }}'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ "\n" }}{{ end }}'

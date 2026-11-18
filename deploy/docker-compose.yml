@@ -161,6 +161,14 @@ services:
     ports:
       - "9100:9100"
 
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml"]
+    volumes:
+      - ../observability/alertmanager:/etc/alertmanager:ro
+    ports:
+      - "9093:9093"
+
   prometheus:
     image: prom/prometheus:v2.55.1
     volumes:
@@ -176,6 +184,7 @@ services:
       - postgres-exporter
       - redis-exporter
       - node-exporter
+      - alertmanager
 
   grafana:
     image: grafana/grafana:11.2.0
