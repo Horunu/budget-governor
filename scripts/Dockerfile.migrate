@@ -6,4 +6,6 @@ WORKDIR /app
 RUN pip install --no-cache-dir "psycopg[binary]>=3.1,<4"
 COPY migrations ./migrations
 COPY scripts/migrate.py ./scripts/migrate.py
+# Lets the AWS deploy seed demo tenants from inside the VPC (run-task command override).
+COPY scripts/seed.py ./scripts/seed.py
 CMD ["python", "scripts/migrate.py"]

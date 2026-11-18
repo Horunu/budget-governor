@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
 	"github.com/prometheus/client_golang/prometheus"
@@ -82,7 +84,12 @@ func main() {
 	asyncLogger := observability.NewAsyncLogger(10000)
 	go asyncLogger.Run(ctx)
 
-	spendWriter := proxy.NewSpendWriter(db, cfg.SpendQueueCapacity, cfg.SpendFlushBatchSize, cfg.SpendFlushInterval, logger, metrics.SpendWriteDropped)
+	spendSink, err := buildSpendSink(ctx, cfg, db, logger)
+	if err != nil {
+		logger.Error("spend sink init failed", "error", err)
+		os.Exit(1)
+	}
+	spendWriter := proxy.NewSpendWriter(spendSink, cfg.SpendQueueCapacity, cfg.SpendFlushBatchSize, cfg.SpendFlushInterval, logger, metrics.SpendWriteDropped)
 	go spendWriter.Run(ctx)
 
 	router := proxy.ProviderRouter{
@@ -161,6 +168,27 @@ func readinessHandler(db *sql.DB, rdb *redis.Client) gin.HandlerFunc {
 		}
 		c.JSON(http.StatusOK, gin.H{"ready": true})
 	}
+}
+
+// buildSpendSink picks the spend write destination from config. The
+// Dynamo and dual-write paths load the AWS SDK's default credential
+// chain -- on Fargate this resolves to the task's IAM role.
+func buildSpendSink(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logger) (proxy.SpendSink, error) {
+	pgSink := &proxy.PostgresSpendSink{DB: db}
+	if cfg.SpendBackend == "postgres" {
+		return pgSink, nil
+	}
+	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.AWSRegion))
+	if err != nil {
+		return nil, err
+	}
+	dynSink := &proxy.DynamoSpendSink{Client: dynamodb.NewFromConfig(awsCfg), TableName: cfg.SpendDynamoTable}
+	if cfg.SpendBackend == "dynamo" {
+		logger.Info("spend sink: dynamodb", "table", cfg.SpendDynamoTable, "region", cfg.AWSRegion)
+		return dynSink, nil
+	}
+	logger.Info("spend sink: dual-write (postgres+dynamodb)", "table", cfg.SpendDynamoTable)
+	return &proxy.MultiSpendSink{Sinks: []proxy.SpendSink{pgSink, dynSink}}, nil
 }
 
 func waitForPostgres(ctx context.Context, db *sql.DB, logger *slog.Logger) {

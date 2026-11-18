@@ -50,6 +50,10 @@ checked before it is sent:
   <img src="docs/assets/terminal-demo.svg" alt="Terminal: adding a member, listing spend per member, and a 429 when one member hits their cap" width="820">
 </p>
 
+The full stack also deploys to AWS (ECS Fargate · ALB · ElastiCache Redis ·
+DynamoDB · RDS Postgres) via a self-destructing 29-day Terraform
+module at `~$78/mo`. See [docs/aws-deploy.md](docs/aws-deploy.md).
+
 ---
 
 ## How it works, in 30 seconds

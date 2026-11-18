@@ -1,0 +1,117 @@
+name: k6-evidence
+
+# Manual-only. Runs the fanout_burst scenario against a deployed gateway,
+# writes the k6 JSON summary + a trimmed markdown report to
+# docs/evidence/, commits them so the resume figures have receipts in
+# the repo. Not on push: k6 against the AWS stack costs real Fargate
+# time, so each run is deliberate.
+
+on:
+  workflow_dispatch:
+    inputs:
+      gateway_url:
+        description: "Gateway URL (e.g. http://bgov-alb-...elb.amazonaws.com)"
+        required: true
+      api_key:
+        description: "Admin API key for a seeded tenant"
+        required: true
+      target_rate:
+        description: "Target iterations/sec"
+        required: false
+        default: "2400"
+      duration:
+        description: "k6 scenario duration (e.g. 60s, 2m)"
+        required: false
+        default: "60s"
+      label:
+        description: "Short tag used in the output filename (e.g. aws-eu-west-2)"
+        required: false
+        default: "manual"
+
+permissions:
+  contents: write
+
+jobs:
+  k6:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+
+      - name: Run fanout_burst
+        env:
+          GATEWAY_URL: ${{ inputs.gateway_url }}
+          API_KEY: ${{ inputs.api_key }}
+          TARGET_RATE: ${{ inputs.target_rate }}
+          DURATION: ${{ inputs.duration }}
+        run: |
+          mkdir -p docs/evidence
+          STAMP=$(date -u +%Y%m%d-%H%M%S)
+          TAG="${{ inputs.label }}"
+          BASE="docs/evidence/${STAMP}-${TAG}-${TARGET_RATE}rps"
+          echo "BASE=$BASE" >> $GITHUB_ENV
+          k6 run \
+            --summary-export "${BASE}.json" \
+            --out "csv=${BASE}.csv" \
+            loadtest/fanout_burst.js \
+            2>&1 | tee "${BASE}.log"
+
+      - name: Summarize for the repo
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          base = pathlib.Path(os.environ["BASE"])
+          summary = json.loads(base.with_suffix(".json").read_text())
+          m = summary.get("metrics", {})
+          def g(k, sub="avg"):
+              return m.get(k, {}).get(sub) or m.get(k, {}).get("values", {}).get(sub)
+          lines = [
+              f"# k6 run — {base.stem}",
+              "",
+              f"- target rate: {os.environ.get('TARGET_RATE','?')} req/s",
+              f"- duration:    {os.environ.get('DURATION','?')}",
+              f"- gateway:     {os.environ.get('GATEWAY_URL','?')}",
+              "",
+              "## Allowed requests (the p99 the resume cites)",
+              "",
+              f"- count:    {int(g('allowed_requests', 'count') or 0):,}",
+              f"- avg:      {g('allowed_request_duration','avg'):.1f} ms"
+                  if g('allowed_request_duration','avg') else "- avg:      n/a",
+              f"- p95:      {g('allowed_request_duration','p(95)'):.1f} ms"
+                  if g('allowed_request_duration','p(95)') else "- p95:      n/a",
+              f"- p99:      {g('allowed_request_duration','p(99)'):.1f} ms"
+                  if g('allowed_request_duration','p(99)') else "- p99:      n/a",
+              "",
+              "## Rejections (expected; the budget bites)",
+              "",
+              f"- count:    {int(g('rejected_requests','count') or 0):,}",
+              "",
+              "## Raw",
+              "",
+              f"- `{base.name}.json` — k6 summary export",
+              f"- `{base.name}.csv`  — per-request rows",
+              f"- `{base.name}.log`  — stdout",
+          ]
+          base.with_suffix(".md").write_text("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
+      - name: Commit evidence
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/evidence/
+          git commit -m "chore(evidence): k6 run ${{ inputs.label }} @ ${{ inputs.target_rate }} rps" || exit 0
+          git push
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: k6-${{ inputs.label }}-${{ inputs.target_rate }}rps
+          path: docs/evidence/

@@ -1,0 +1,5 @@
+alert_email     = "you@example.com"
+db_password     = "change-me-before-apply"
+# 29 days from the day you apply. Format: RFC3339 UTC.
+auto_destroy_at = "2026-12-17T00:00:00Z"
+platform_token  = "change-me-before-apply"

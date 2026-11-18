@@ -19,6 +19,13 @@ venv/
 scripts/.seed_output.json
 scripts/.seed_output.env
 
+# Terraform (tfvars holds the DB password; state holds it too)
+deploy/aws/terraform/terraform.tfvars
+deploy/aws/terraform/.terraform/
+deploy/aws/terraform/*.tfstate*
+deploy/aws/terraform/.build/
+deploy/aws/terraform/tfplan
+
 # Data / logs
 *.log
 loadtest/results/*.json
