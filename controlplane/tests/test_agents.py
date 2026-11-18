@@ -66,3 +66,36 @@ async def test_agent_scoped_key_authenticates(client, tenant_with_admin_key):
         headers={"Authorization": f"Bearer {agent_key}"},
     )
     assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_list_rotate_and_remove_agent(client, tenant_with_admin_key):
+    _, admin_key = tenant_with_admin_key
+    admin = {"Authorization": f"Bearer {admin_key}"}
+    created = (await client.post("/v1/agents", json={"name": "bob"}, headers=admin)).json()
+    old_key = created["api_key"]
+
+    listed = (await client.get("/v1/agents", headers=admin)).json()
+    assert [(a["name"], a["active"]) for a in listed] == [("bob", True)]
+
+    rotated = await client.post(f"/v1/agents/{created['id']}/rotate-key", headers=admin)
+    assert rotated.status_code == 200
+    new_key = rotated.json()["api_key"]
+    assert new_key != old_key
+    assert (await client.get("/v1/agents", headers={"Authorization": f"Bearer {old_key}"})).status_code == 401
+
+    assert (await client.delete(f"/v1/agents/{created['id']}", headers=admin)).status_code == 204
+    assert (await client.get("/v1/agents", headers={"Authorization": f"Bearer {new_key}"})).status_code == 401
+    listed = (await client.get("/v1/agents", headers=admin)).json()
+    assert listed[0]["active"] is False
+
+
+@pytest.mark.asyncio
+async def test_agent_endpoints_scoped_to_own_tenant(client, tenant_with_admin_key):
+    _, admin_key = tenant_with_admin_key
+    agent = (await client.post("/v1/agents", json={"name": "kyle"}, headers={"Authorization": f"Bearer {admin_key}"})).json()
+    # The agent's own key lacks admin scope, so it cannot remove itself or list the team.
+    member = {"Authorization": f"Bearer {agent['api_key']}"}
+    assert (await client.delete(f"/v1/agents/{agent['id']}", headers=member)).status_code == 403
+    assert (await client.get("/v1/agents", headers=member)).status_code == 403
+    assert (await client.delete("/v1/agents/agent_does_not_exist", headers={"Authorization": f"Bearer {admin_key}"})).status_code == 404
