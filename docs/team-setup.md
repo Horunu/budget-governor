@@ -67,9 +67,43 @@ export OPENAI_API_KEY=<their bg_live_ key>
 They can use Claude models through it: send `"model": "claude-sonnet-5"`
 (or any `claude-*`) and the gateway routes it to Anthropic.
 
-**Limit:** the gateway speaks the OpenAI chat-completions format only
-(`POST /v1/chat/completions`, with streaming). Tools that only talk
-Anthropic's own Messages API (`/v1/messages`) cannot point at it yet.
+Agent features work: tools, tool calls and tool results, image and other
+content parts, and streaming. For OpenAI models the request is forwarded
+unchanged; for Claude models the gateway translates it to Anthropic's
+format and back, so the agent's tool loop sees normal OpenAI responses.
+
+### OpenCode
+
+In `~/.config/opencode/opencode.json` (or the project's `opencode.json`):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "budget-governor": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Budget Governor",
+      "options": {
+        "baseURL": "https://your-gateway/v1",
+        "apiKey": "{env:BG_API_KEY}"
+      },
+      "models": {
+        "claude-sonnet-5": { "name": "Claude Sonnet 5" },
+        "gpt-4o-mini": { "name": "GPT-4o mini" }
+      }
+    }
+  }
+}
+```
+
+Then `export BG_API_KEY=<their key>` and pick a `budget-governor/...`
+model in OpenCode. Other agents built on OpenAI-compatible clients (the AI
+SDK, LangChain, aider, Continue, ...) are set up the same way: base URL
+plus key.
+
+**Not supported yet:** Codex (it only speaks OpenAI's Responses API,
+`/v1/responses`) and Claude Code (Anthropic's Messages API,
+`/v1/messages`).
 
 Their key always spends as them. Setting `X-Agent-Id` to someone else
 gets a 403 `agent_mismatch`; leaving it out is fine.
