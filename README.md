@@ -1,175 +1,312 @@
-# Budget Governor
+<p align="center">
+  <img src="docs/assets/hero.svg" alt="Budget Governor: each teammate's AI agent goes through one gateway that forwards affordable calls and blocks the rest" width="100%">
+</p>
 
-Budget Governor sits between your AI agents and the LLM providers they call
-(OpenAI, Anthropic) and stops them from spending more money than you allowed.
+<p align="center">
+  <b>Give every teammate's AI agent its own spending cap, on one shared API key.</b><br>
+  A drop-in gateway for OpenAI-compatible agents. Runaway loops get a <code>429</code>, not your credit card.
+</p>
 
-The typical setup: a team shares one company API key, several people run
-agents on it, and you want each person capped so one runaway loop cannot
-burn the month's budget. The real key stays on the gateway; each member
-gets their own gateway key with its own daily cap. See
-[docs/team-setup.md](docs/team-setup.md) for the 10-minute version.
+<p align="center">
+  <a href="#try-it-in-2-minutes"><img alt="Try it" src="https://img.shields.io/badge/try_it-2_minutes-1d1b17?style=for-the-badge"></a>
+  <a href="docs/team-setup.md"><img alt="Team setup" src="https://img.shields.io/badge/team_setup-10_minutes-5a554b?style=for-the-badge"></a>
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-c8391f?style=for-the-badge"></a>
+</p>
 
-Every request goes through it first. It checks how much budget the tenant,
-the agent, and the task have left. If there is enough, it forwards the call
-and records what was actually spent. If there is not, it blocks the call and
-returns a 429 instead of letting the bill grow.
+<p align="center">
+  <img alt="Go" src="https://img.shields.io/badge/gateway-Go-00ADD8?logo=go&logoColor=white">
+  <img alt="Python" src="https://img.shields.io/badge/control_plane-FastAPI-009688?logo=fastapi&logoColor=white">
+  <img alt="Redis" src="https://img.shields.io/badge/budgets-Redis-DC382D?logo=redis&logoColor=white">
+  <img alt="Postgres" src="https://img.shields.io/badge/ledger-Postgres-4169E1?logo=postgresql&logoColor=white">
+  <img alt="Grafana" src="https://img.shields.io/badge/dashboards-Grafana-F46800?logo=grafana&logoColor=white">
+  <img alt="Works with" src="https://img.shields.io/badge/works_with-OpenCode_·_AI_SDK_·_LangChain-222">
+</p>
 
-It also:
+---
 
-* suggests cheaper ways to make the call when a budget is running low
-* compares its own spend numbers against the provider's billing API to catch
-  drift
-* ships dashboards and alerts that warn you while you are overspending, not
-  after the invoice arrives
+## The problem
+
+Your team shares one Anthropic or OpenAI key. Several people run coding agents
+on it all day. One agent gets stuck in a loop at 2am, and you find out when the
+invoice arrives.
+
+## The fix
+
+Put **Budget Governor** in the middle. The real key lives only on your server.
+Each teammate gets their **own key with their own daily cap**. Every AI call is
+checked before it is sent:
+
+| Feature | What it means |
+|---|---|
+| **Per-person keys** | Bob's key always spends Bob's budget. He can't use Sarah's, and he never sees the real key. |
+| **Hard caps** | Over budget means a `429`. Only that person stops. Everyone else keeps working. |
+| **Fair refill** | A $25/day cap refills evenly over 24h, so nobody is locked out until midnight. |
+| **Soft landing** | Running low? The gateway can switch the call to a cheaper model before blocking it. |
+| **Real agent support** | Tools, tool calls, images and streaming all work, for both GPT and Claude models. |
+| **Slack alerts** | "kyle has used 80% of their daily cap", while it is happening, not after. |
+| **Bill checking** | A job compares the gateway's records with the provider's real bill and flags gaps. |
+
+<p align="center">
+  <img src="docs/assets/terminal-demo.svg" alt="Terminal: adding a member, listing spend per member, and a 429 when one member hits their cap" width="820">
+</p>
+
+---
+
+## How it works, in 30 seconds
+
+```
+  Bob's agent ──┐                                ┌──► Anthropic
+  Sarah's     ──┼──►  GATEWAY  ① who is this?    ├──► OpenAI
+  Kyle's      ──┘             ② can they afford it?
+                              ③ forward, or block with 429
+                              ④ record the real cost
+```
+
+1. **Who is this?** The gateway looks up the key. Each key belongs to one person.
+2. **Can they afford it?** It estimates the cost and checks two wallets in
+   Redis at once: the person's and the team's. Both must have room.
+3. **Forward or block.** If yes, the call goes to Anthropic or OpenAI with the
+   real key. If no, it can try a cheaper model, otherwise it returns `429`.
+4. **Record.** The real cost comes back, the estimate is corrected, and one row
+   lands in the Postgres ledger. Dashboards and alerts read from there.
+
+Want the full picture? See [How it fits together](#how-it-fits-together) below.
+
+---
+
+## Try it in 2 minutes
+
+No API keys needed. Models whose name starts with `mock-` are answered by a
+built-in fake provider with realistic latency and real pricing math.
+
+```bash
+git clone https://github.com/Horunu/budget-governor.git
+cd budget-governor
+cp .env.example .env
+```
+
+```bash
+make up      # start everything (Docker)
+```
+
+```bash
+make demo    # watch one agent get allowed, throttled, rerouted, blocked
+```
+
+Then open:
+
+| What | URL | Login |
+|---|---|---|
+| Grafana dashboards | http://localhost:3000 | `admin` / `admin` |
+| Alerts | http://localhost:9093 | |
+| Prometheus | http://localhost:9091 | |
+
+Other commands: `make seed` (demo data), `make smoke` (end-to-end check),
+`make bench` (load test), `make logs`, `make down`.
+
+---
+
+## Set it up for your team
+
+**1. Put your real key on the server** and start it:
+
+```bash
+# in .env
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...        # optional
+```
+
+```bash
+make up
+```
+
+**2. Create the team and add people** with `scripts/team.py`:
+
+```bash
+python3 scripts/team.py init my-team --daily 100   # team-wide cap, prints your admin key
+```
+
+```bash
+python3 scripts/team.py add bob --daily 25         # prints Bob's key + setup lines
+```
+
+**3. Run it day to day:**
+
+| Command | What it does |
+|---|---|
+| `team.py list` | Everyone's cap and last-24h spend |
+| `team.py cap bob --daily 40` | Change Bob's cap |
+| `team.py cap --daily 150` | Change the team cap |
+| `team.py rotate bob` | Bob lost his key: kill it, issue a new one |
+| `team.py remove kyle` | Cut someone off (history is kept) |
+
+**4. Optional: Slack alerts.** Save a Slack incoming-webhook URL to
+`observability/alertmanager/slack_webhook` and run `make up` again.
+
+Full guide: **[docs/team-setup.md](docs/team-setup.md)**
+
+---
+
+## Connect your agents
+
+Each teammate points their agent at the gateway with their own key. That is
+the only change they make.
+
+```bash
+export OPENAI_BASE_URL=https://your-gateway/v1
+export OPENAI_API_KEY=<their bg_live_ key>
+```
+
+They can call Claude through it too: use `"model": "claude-sonnet-5"` and the
+gateway translates to Anthropic and back.
+
+<details>
+<summary><b>OpenCode config</b></summary>
+
+`~/.config/opencode/opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "budget-governor": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Budget Governor",
+      "options": {
+        "baseURL": "https://your-gateway/v1",
+        "apiKey": "{env:BG_API_KEY}"
+      },
+      "models": {
+        "claude-sonnet-5": { "name": "Claude Sonnet 5" },
+        "gpt-4o-mini": { "name": "GPT-4o mini" }
+      }
+    }
+  }
+}
+```
+
+</details>
+
+| Client | Works? |
+|---|---|
+| OpenCode, Vercel AI SDK, LangChain, aider, Continue, OpenAI SDKs | via `/v1/chat/completions` |
+| Codex (Responses API, `/v1/responses`) | Not yet |
+| Claude Code (Messages API, `/v1/messages`) | Not yet |
+
+---
+
+## What happens when someone runs low
+
+```
+ Bob can't afford this call
+        │
+        ▼
+ Cost Advisor (an LLM, 300ms max): "try a smaller model?"
+        │
+        ▼
+ Policy engine (plain rules, always has the final say)
+        │
+   ┌────┴─────────────────────┐
+   ▼                          ▼
+ cheaper option fits        nothing fits
+ → run it, response says    → 429 over_agent_budget
+   "budget_advisory: ..."     Bob's agent stops. Nobody else does.
+```
+
+The AI advisor only **suggests**. It can never approve spending.
+
+---
 
 ## How it fits together
 
 ```mermaid
 flowchart LR
-    Client["Agent / client"] -->|"POST /v1/chat/completions"| Gateway["Gateway (Go)\nauth · budget enforcement · proxy"]
-    Gateway <-->|"EVALSHA checkAndDecrement.lua"| Redis[("Redis\ntoken buckets")]
-    Gateway -->|"allowed"| Provider["OpenAI / Anthropic / Mock"]
-    Gateway -.->|"budget pressure only"| Advisor["Cost Advisor (Python)\nLLM suggestions"]
-    Gateway -->|"async batched"| Postgres[("Postgres\ntenants · budgets · spend_events")]
-    ControlPlane["Control Plane (FastAPI)"] --> Postgres
-    Reconciliation["Reconciliation job"] --> Postgres
-    Reconciliation -->|"usage/cost APIs"| Provider
-    Gateway --> Prometheus[("Prometheus")]
-    ControlPlane --> Prometheus
-    Advisor --> Prometheus
-    Prometheus --> Grafana["Grafana dashboards"]
-    Postgres -->|"custom query"| PGExporter["postgres_exporter"] --> Prometheus
+    Agents["Team agents<br/>(OpenCode, SDKs…)"] -->|"POST /v1/chat/completions"| Gateway["Gateway (Go)<br/>auth · budgets · proxy"]
+    Gateway <-->|"atomic check-and-spend<br/>(Lua script)"| Redis[("Redis<br/>live wallets")]
+    Gateway -->|"allowed calls"| Provider["Anthropic / OpenAI / Mock"]
+    Gateway -.->|"only when money is tight"| Advisor["Cost Advisor (Python)"]
+    Gateway -->|"async, batched"| Postgres[("Postgres<br/>team · keys · caps · ledger")]
+    You["You<br/>scripts/team.py"] --> ControlPlane["Control Plane (FastAPI)"]
+    ControlPlane --> Postgres
+    Recon["Reconciliation job"] --> Postgres
+    Recon -->|"real usage & cost APIs"| Provider
+    Postgres --> Prometheus["Prometheus"]
+    Gateway --> Prometheus
+    Prometheus --> Grafana["Grafana"]
+    Prometheus --> Alertmanager["Alertmanager → Slack"]
 ```
 
-In words:
+| Piece | Its one job | Code |
+|---|---|---|
+| **Gateway** | The checkpoint every AI call passes through | [`gateway/`](gateway/) |
+| **Redis** | Live wallets: how much each person and the team have left | [`checkAndDecrement.lua`](gateway/internal/budget/checkAndDecrement.lua) |
+| **Postgres** | The record: team, members, hashed keys, caps, one row per call | [`migrations/`](migrations/) |
+| **Control plane** | Admin API behind `team.py` | [`controlplane/`](controlplane/) |
+| **Cost advisor** | Suggests cheaper options under budget pressure | [`advisor/`](advisor/) |
+| **Policy engine** | Fixed rules that decide what actually happens | [`gateway/internal/policy/`](gateway/internal/policy/) |
+| **Reconciliation** | Checks the ledger against the provider's real bill | [`reconciliation/`](reconciliation/) |
+| **Observability** | Dashboards, alert rules, Slack routing | [`observability/`](observability/) |
 
-1. **Gateway (Go)** is the piece on the request path. It checks the API key,
-   estimates the cost, asks Redis whether there is budget left, forwards the
-   call to the provider, and writes the real cost down afterwards.
-2. **Redis** holds the token buckets. A small Lua script does the
-   check-and-subtract in one atomic step, so many gateway instances can share
-   the same budget safely.
-3. **Postgres** is the system of record: tenants, agents, keys, budgets, and
-   one row per call in `spend_events`.
-4. **Control plane (FastAPI)** is the admin API where you create tenants,
-   agents, API keys, and budgets, and where you query spend.
-5. **Cost advisor (Python)** is only called when a request is about to be
-   throttled. It asks an LLM for cheaper alternatives. Its answers are
-   suggestions only. A deterministic policy engine in the gateway decides
-   what actually happens, so an LLM never gets to approve spending.
-6. **Reconciliation job (Python)** runs on a schedule, pulls the provider's
-   own usage and cost numbers, compares them to what the gateway recorded,
-   and files an incident if the gap is too big.
-7. **Prometheus and Grafana** collect the metrics and show three
-   pre-built dashboards, plus burn-rate and drift alerts.
+<details>
+<summary><b>Why it's built this way</b></summary>
 
-## Quickstart
+- **One atomic Redis step.** Ten agents hitting the same wallet at once can't
+  spend the same last dollar twice, and many gateway replicas can share one
+  budget.
+- **Estimate, then settle.** The real cost is only known after the answer, so
+  the gateway reserves the worst case and refunds the difference.
+- **Fail closed.** A team with no budget configured cannot spend at all.
+- **Nothing slow on the hot path.** Keys and caps are cached in memory; spend
+  is written to Postgres in the background.
+- **LLM advises, rules decide.** See ADR-003 in
+  [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
-```bash
-git clone <this-repo>
-cd budget-governor
-cp .env.example .env
+</details>
 
-make up          # start everything with docker compose
-make seed        # create 3 demo tenants/agents/budgets, print their API keys
-make smoke       # run an end-to-end check and print pass/fail
-make demo        # walk one agent through allow, throttle, reroute, spend
-make bench       # k6 load test: 5,000+ req/s, p50/p95/p99, cost attribution
+---
+
+## Repo map
+
 ```
-
-Then open **Grafana** at http://localhost:3000 (`admin` / `admin`). The
-"Tenant Overview", "Gateway Health", and "Reconciliation Drift" dashboards
-are already set up. Prometheus is at http://localhost:9091.
-
-Other useful targets: `make down`, `make logs`, `make test`.
-
-To set it up for real people instead of the demo tenants, use
-`scripts/team.py` (init a team, add members with caps, list spend, rotate or
-remove keys) as described in [docs/team-setup.md](docs/team-setup.md).
-
-## You do not need API keys to try it
-
-Running without provider keys is the default, and it still does something
-real. Any request whose `model` starts with `mock-` (which includes every
-seeded demo agent) is handled by a built-in mock provider with variable
-latency of 50 to 500ms, token counts that depend on input length, and cost
-math driven by the real pricing table. No network calls happen.
-
-The other two mocks work the same way. `ADVISOR_LLM_PROVIDER=mock` (the
-default) gives the advisor canned but sensible suggestions, and the
-reconciliation job's `MockUsageProvider` derives plausible
-"provider-reported" spend from the gateway's own numbers so drift detection
-has something to detect.
-
-The relevant files are `gateway/internal/provider/mock.go`,
-`advisor/app/llm_client.py`, and
-`reconciliation/usage_providers/mock_usage.py`. ADR-008 in
-`docs/DECISIONS.md` explains why the mocks are realistic rather than stubs.
-
-## Using real providers
-
-Put your keys in `.env` (`.env.example` lists every option with comments):
-
-```bash
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
+gateway/          Go request path: auth, budgets, provider adapters, streaming, policy
+controlplane/     FastAPI admin API: teams, members, keys, caps, spend, incidents
+advisor/          Python cost advisor (LLM suggestions)
+reconciliation/   Scheduled job comparing spend with provider billing
+providers/        Shared Python pricing table
+migrations/       SQL schema
+observability/    Prometheus rules, Alertmanager, Grafana dashboards
+scripts/          team.py, seed, smoke, demo, benchmark, migrate
+loadtest/         k6 load tests
+deploy/           docker-compose
+docs/             Team setup, architecture, decisions, runbook
 ```
-
-Routing is automatic. A request for `gpt-4o` or `claude-sonnet-5` goes to the
-matching provider because `gateway/internal/proxy/router.go` picks by model
-name prefix. There is nothing else to configure.
-
-Two extras, if you want them:
-
-* To reconcile against real billing, also set `OPENAI_ADMIN_KEY` and
-  `ANTHROPIC_ADMIN_KEY`. These are organization-scoped admin keys, which are
-  not the same as your normal inference keys. See
-  `reconciliation/usage_providers/`.
-* To let the advisor call a real LLM, set `ADVISOR_LLM_PROVIDER=openai` or
-  `anthropic`.
-
-> **Check the prices before trusting this with real money.** The pricing
-> tables in `gateway/internal/provider/pricing.go` and `providers/pricing.py`
-> are hand-maintained and dated in the file header, not fetched live. That is
-> deliberate, but it means you should compare them against each provider's
-> current pricing page first.
-
-## Repo layout
-
-| Path | What is in it |
-|---|---|
-| `gateway/` | Go request path: auth, budget enforcement, provider proxy, streaming, policy engine |
-| `controlplane/` | Python/FastAPI admin API: tenants, agents, API keys, budgets, spend queries, incidents |
-| `advisor/` | Python/FastAPI cost optimizer that suggests cheaper calls |
-| `reconciliation/` | Python scheduled job that compares spend against provider billing |
-| `providers/` | Shared pricing table (Python), used by the advisor and reconciliation |
-| `migrations/` | Shared SQL schema, applied by `scripts/migrate.py` |
-| `observability/` | Prometheus scrape configs and alert rules, Grafana dashboards |
-| `loadtest/` | k6 load test scripts |
-| `scripts/` | seed / smoke / benchmark / migrate |
-| `deploy/` | `docker-compose.yml` |
-| `docs/` | Architecture, decisions, runbook |
 
 ## Docs
 
-* [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): the full design, with a
-  per-request sequence diagram, failure modes, and scaling notes.
-* [`docs/DECISIONS.md`](docs/DECISIONS.md): why each major choice was made.
-* [`docs/RUNBOOK.md`](docs/RUNBOOK.md): operating it.
+- **[Team setup](docs/team-setup.md)**: the 10-minute guide for a real team
+- **[Architecture](docs/ARCHITECTURE.md)**: request sequence, failure modes, scaling
+- **[Decisions](docs/DECISIONS.md)**: why each big choice was made
+- **[Runbook](docs/RUNBOOK.md)**: what to do when each alert fires
 
-## Where to look
+## Before trusting it with real money
 
-* **Budget enforcement:** `gateway/internal/budget/` and the Lua script
-  `checkAndDecrement.lua`. Concurrency tests are in `bucket_test.go`; load
-  tests are in `loadtest/fanout_burst.js` (`make bench`).
-* **Auth:** `gateway/internal/auth/` on the request path,
-  `controlplane/app/auth/` for the admin API.
-* **Advisor and policy:** `advisor/app/` makes suggestions,
-  `gateway/internal/policy/` decides.
-* **Reconciliation:** `reconciliation/job.py` and
-  `reconciliation/usage_providers/`.
-* **Alerts and dashboards:** `observability/prometheus/alerts.yml` (see
-  `BurnRateHigh`) and `observability/grafana/dashboards/`.
+- **Check the prices.** The pricing tables in
+  [`gateway/internal/provider/pricing.go`](gateway/internal/provider/pricing.go)
+  and [`providers/pricing.py`](providers/pricing.py) are hand-maintained and
+  dated. Compare them with the providers' current pricing pages.
+- **Change `PLATFORM_BOOTSTRAP_TOKEN`** in `.env` before exposing the server.
+- **Billing reconciliation** needs org admin keys (`OPENAI_ADMIN_KEY`,
+  `ANTHROPIC_ADMIN_KEY`), which are separate from normal API keys.
+
+## Tests
+
+```bash
+make test
+```
+
+Runs every service's suite. The Python services each need their own venv
+first: `python3 -m venv .venv && pip install -e ".[dev]"` inside the service
+folder.
 
 ## License
 
