@@ -55,8 +55,11 @@ type anthropicUsage struct {
 }
 
 type anthropicContentBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type  string          `json:"type"`
+	Text  string          `json:"text"`
+	ID    string          `json:"id"`    // tool_use
+	Name  string          `json:"name"`  // tool_use
+	Input json.RawMessage `json:"input"` // tool_use
 }
 
 type anthropicResponse struct {
@@ -104,7 +107,7 @@ func toAnthropicRequest(req Request) anthropicRequest {
 	}
 }
 
-func (p *AnthropicProvider) do(ctx context.Context, body anthropicRequest) (*http.Response, error) {
+func (p *AnthropicProvider) do(ctx context.Context, body any) (*http.Response, error) {
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -121,8 +124,18 @@ func (p *AnthropicProvider) do(ctx context.Context, body anthropicRequest) (*htt
 
 func (p *AnthropicProvider) Complete(ctx context.Context, req Request) (Response, error) {
 	start := time.Now()
-	body := toAnthropicRequest(req)
-	body.Stream = false
+	var body any
+	if req.Raw != nil {
+		agentBody, err := toAnthropicAgentRequest(req, false)
+		if err != nil {
+			return Response{}, &ProviderError{StatusCode: http.StatusBadRequest, Type: "invalid_request_error", Message: err.Error()}
+		}
+		body = agentBody
+	} else {
+		plain := toAnthropicRequest(req)
+		plain.Stream = false
+		body = plain
+	}
 
 	httpResp, err := p.do(ctx, body)
 	if err != nil {
@@ -152,7 +165,12 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req Request) (Response
 	totalIn := parsed.Usage.InputTokens + parsed.Usage.CacheCreationInputTokens + parsed.Usage.CacheReadInputTokens
 	usage := Usage{TokensIn: totalIn, TokensOut: parsed.Usage.OutputTokens}
 
+	var raw json.RawMessage
+	if req.Raw != nil {
+		raw = anthropicToOpenAICompletion(parsed, usage)
+	}
 	return Response{
+		Raw:          raw,
 		ID:           parsed.ID,
 		Model:        parsed.Model,
 		Content:      content.String(),
@@ -168,13 +186,18 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req Request) (Response
 // message_delta for the final output_tokens total).
 type anthropicSSEEvent struct {
 	Type    string `json:"type"`
+	Index   int    `json:"index"`
 	Message struct {
+		ID    string         `json:"id"`
+		Model string         `json:"model"`
 		Usage anthropicUsage `json:"usage"`
 	} `json:"message"`
-	Delta struct {
-		Type       string `json:"type"`
-		Text       string `json:"text"`
-		StopReason string `json:"stop_reason"`
+	ContentBlock anthropicContentBlock `json:"content_block"`
+	Delta        struct {
+		Type        string `json:"type"`
+		Text        string `json:"text"`
+		PartialJSON string `json:"partial_json"`
+		StopReason  string `json:"stop_reason"`
 	} `json:"delta"`
 	Usage anthropicUsage `json:"usage"`
 	Error struct {
@@ -184,6 +207,9 @@ type anthropicSSEEvent struct {
 }
 
 func (p *AnthropicProvider) Stream(ctx context.Context, req Request, w StreamWriter) error {
+	if req.Raw != nil {
+		return p.streamAgent(ctx, req, w)
+	}
 	body := toAnthropicRequest(req)
 	body.Stream = true
 
@@ -237,6 +263,86 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req Request, w StreamWri
 			})
 		case "error":
 			return &ProviderError{StatusCode: 0, Type: evt.Error.Type, Message: evt.Error.Message}
+		}
+	}
+	return scanner.Err()
+}
+
+// streamAgent streams an agent (Raw) request, emitting OpenAI chunks that
+// carry text and tool-call deltas.
+func (p *AnthropicProvider) streamAgent(ctx context.Context, req Request, w StreamWriter) error {
+	body, err := toAnthropicAgentRequest(req, true)
+	if err != nil {
+		return &ProviderError{StatusCode: http.StatusBadRequest, Type: "invalid_request_error", Message: err.Error()}
+	}
+	httpResp, err := p.do(ctx, body)
+	if err != nil {
+		return err
+	}
+	defer httpResp.Body.Close()
+	if httpResp.StatusCode >= 400 {
+		return parseAnthropicError(httpResp)
+	}
+
+	ch := &anthropicChunker{model: req.Model, created: time.Now().Unix(), toolIndex: map[int]int{}}
+	var inputTokens, cacheCreation, cacheRead, outputTokens int
+
+	scanner := bufio.NewScanner(httpResp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	for scanner.Scan() {
+		payload, ok := strings.CutPrefix(scanner.Text(), "data: ")
+		if !ok {
+			continue
+		}
+		var evt anthropicSSEEvent
+		if json.Unmarshal([]byte(payload), &evt) != nil {
+			continue
+		}
+		var out []byte
+		switch evt.Type {
+		case "message_start":
+			ch.id = evt.Message.ID
+			if evt.Message.Model != "" {
+				ch.model = evt.Message.Model
+			}
+			inputTokens = evt.Message.Usage.InputTokens
+			cacheCreation = evt.Message.Usage.CacheCreationInputTokens
+			cacheRead = evt.Message.Usage.CacheReadInputTokens
+			out = ch.chunk(map[string]any{"role": "assistant", "content": ""}, nil)
+		case "content_block_start":
+			if evt.ContentBlock.Type == "tool_use" {
+				tc := oaiToolCall{ID: evt.ContentBlock.ID, Type: "function"}
+				tc.Function.Name = evt.ContentBlock.Name
+				out = ch.toolDelta(evt.Index, tc)
+			}
+		case "content_block_delta":
+			switch evt.Delta.Type {
+			case "text_delta":
+				out = ch.chunk(map[string]any{"content": evt.Delta.Text}, nil)
+			case "input_json_delta":
+				var tc oaiToolCall
+				tc.Function.Arguments = evt.Delta.PartialJSON
+				out = ch.toolDelta(evt.Index, tc)
+			}
+		case "message_delta":
+			outputTokens = evt.Usage.OutputTokens
+			if evt.Delta.StopReason != "" {
+				finish := openAIFinishReason(evt.Delta.StopReason)
+				out = ch.chunk(map[string]any{}, &finish)
+			}
+		case "message_stop":
+			usage := Usage{TokensIn: inputTokens + cacheCreation + cacheRead, TokensOut: outputTokens}
+			if err := w.Write(StreamChunk{Raw: ch.usageChunk(usage)}); err != nil {
+				return err
+			}
+			return w.Write(StreamChunk{Done: true, Usage: usage})
+		case "error":
+			return &ProviderError{StatusCode: 0, Type: evt.Error.Type, Message: evt.Error.Message}
+		}
+		if out != nil {
+			if err := w.Write(StreamChunk{Raw: out}); err != nil {
+				return err
+			}
 		}
 	}
 	return scanner.Err()

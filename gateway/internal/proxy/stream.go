@@ -63,6 +63,10 @@ func (w *sseChunkWriter) Write(chunk provider.StreamChunk) error {
 		return err
 	}
 
+	if chunk.Raw != nil {
+		return w.writeData(chunk.Raw)
+	}
+
 	var finishPtr *string
 	if chunk.FinishReason != "" {
 		finishPtr = &chunk.FinishReason
@@ -81,6 +85,10 @@ func (w *sseChunkWriter) Write(chunk provider.StreamChunk) error {
 	if err != nil {
 		return err
 	}
+	return w.writeData(b)
+}
+
+func (w *sseChunkWriter) writeData(b []byte) error {
 	if _, err := w.c.Writer.Write([]byte("data: ")); err != nil {
 		return err
 	}

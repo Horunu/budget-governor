@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -67,7 +68,7 @@ type openAIChoice struct {
 	Index   int `json:"index"`
 	Message struct {
 		Role    string `json:"role"`
-		Content string `json:"content"`
+		Content string `json:"content"` // null (tool-call-only replies) decodes as ""
 	} `json:"message"`
 	FinishReason string `json:"finish_reason"`
 }
@@ -114,7 +115,7 @@ func toOpenAIRequest(req Request) openAIChatRequest {
 	}
 }
 
-func (p *OpenAIProvider) do(ctx context.Context, body openAIChatRequest) (*http.Response, error) {
+func (p *OpenAIProvider) do(ctx context.Context, body any) (*http.Response, error) {
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -130,8 +131,14 @@ func (p *OpenAIProvider) do(ctx context.Context, body openAIChatRequest) (*http.
 
 func (p *OpenAIProvider) Complete(ctx context.Context, req Request) (Response, error) {
 	start := time.Now()
-	body := toOpenAIRequest(req)
-	body.Stream = false
+	var body any
+	if req.Raw != nil {
+		body = openAIRawBody(req, false)
+	} else {
+		plain := toOpenAIRequest(req)
+		plain.Stream = false
+		body = plain
+	}
 
 	httpResp, err := p.do(ctx, body)
 	if err != nil {
@@ -143,8 +150,12 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req Request) (Response, e
 		return Response{}, parseOpenAIError(httpResp)
 	}
 
+	rawResp, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		return Response{}, fmt.Errorf("openai: read response: %w", err)
+	}
 	var parsed openAIChatResponse
-	if err := json.NewDecoder(httpResp.Body).Decode(&parsed); err != nil {
+	if err := json.Unmarshal(rawResp, &parsed); err != nil {
 		return Response{}, fmt.Errorf("openai: decode response: %w", err)
 	}
 	if len(parsed.Choices) == 0 {
@@ -152,7 +163,12 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req Request) (Response, e
 	}
 
 	usage := Usage{TokensIn: parsed.Usage.PromptTokens, TokensOut: parsed.Usage.CompletionTokens}
+	var raw json.RawMessage
+	if req.Raw != nil {
+		raw = rawResp // tool_calls and every other field go back untouched
+	}
 	return Response{
+		Raw:          raw,
 		ID:           parsed.ID,
 		Model:        parsed.Model,
 		Content:      parsed.Choices[0].Message.Content,
@@ -179,6 +195,9 @@ type openAIChunk struct {
 }
 
 func (p *OpenAIProvider) Stream(ctx context.Context, req Request, w StreamWriter) error {
+	if req.Raw != nil {
+		return p.streamRaw(ctx, req, w)
+	}
 	body := toOpenAIRequest(req)
 	body.Stream = true
 
@@ -232,6 +251,43 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request, w StreamWriter
 		}
 	}
 	return scanner.Err()
+}
+
+// streamRaw forwards every upstream chunk to the client verbatim (tool-call
+// deltas included) and records usage from the final usage chunk.
+func (p *OpenAIProvider) streamRaw(ctx context.Context, req Request, w StreamWriter) error {
+	httpResp, err := p.do(ctx, openAIRawBody(req, true))
+	if err != nil {
+		return err
+	}
+	defer httpResp.Body.Close()
+	if httpResp.StatusCode >= 400 {
+		return parseOpenAIError(httpResp)
+	}
+
+	var usage Usage
+	scanner := bufio.NewScanner(httpResp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	for scanner.Scan() {
+		payload, ok := strings.CutPrefix(scanner.Text(), "data: ")
+		if !ok {
+			continue
+		}
+		if payload == "[DONE]" {
+			break
+		}
+		var chunk openAIChunk
+		if json.Unmarshal([]byte(payload), &chunk) == nil && chunk.Usage != nil {
+			usage = Usage{TokensIn: chunk.Usage.PromptTokens, TokensOut: chunk.Usage.CompletionTokens}
+		}
+		if err := w.Write(StreamChunk{Raw: []byte(payload)}); err != nil {
+			return err
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	return w.Write(StreamChunk{Done: true, Usage: usage})
 }
 
 func parseOpenAIError(resp *http.Response) error {

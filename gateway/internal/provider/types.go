@@ -7,6 +7,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 )
 
@@ -27,6 +28,14 @@ type Request struct {
 	MaxTokens   int       `json:"max_tokens,omitempty"`
 	Temperature float64   `json:"temperature,omitempty"`
 	Stream      bool      `json:"stream,omitempty"`
+
+	// Raw is the client's original OpenAI Chat Completions body. When set,
+	// providers build the upstream call from it instead of Messages, so
+	// tools, tool_calls, content parts and any other field survive (agent
+	// clients depend on them). Messages/System stay as the text view used
+	// for token estimation and the mock provider. Model and MaxTokens on
+	// Request override Raw (the policy engine may change them).
+	Raw map[string]json.RawMessage `json:"-"`
 
 	// Populated by the gateway before dispatch, not by the client.
 	TenantID string `json:"-"`
@@ -52,6 +61,10 @@ type Response struct {
 	Usage        Usage   `json:"usage"`
 	CostUSD      float64 `json:"cost_usd"`
 	LatencyMs    int64   `json:"latency_ms"`
+
+	// Raw, when set, is a complete OpenAI chat.completion body (including
+	// any tool_calls) that the gateway returns to the client as-is.
+	Raw json.RawMessage `json:"-"`
 }
 
 // StreamChunk is one normalized server-sent event emitted while streaming.
@@ -63,6 +76,10 @@ type StreamChunk struct {
 	Done         bool
 	FinishReason string
 	Usage        Usage
+
+	// Raw, when set on a non-Done chunk, is a complete OpenAI
+	// chat.completion.chunk JSON payload written to the client verbatim.
+	Raw []byte
 }
 
 // ProviderError normalizes upstream error responses (OpenAI's

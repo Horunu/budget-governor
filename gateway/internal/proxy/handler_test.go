@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,6 +36,12 @@ type testEnv struct {
 }
 
 func setupTestEnv(t *testing.T, advisorURL string) *testEnv {
+	t.Helper()
+	return setupTestEnvWithOpenAI(t, advisorURL, provider.NewMockProvider(1, 2))
+}
+
+// setupTestEnvWithOpenAI is setupTestEnv with gpt-* models routed to openAI.
+func setupTestEnvWithOpenAI(t *testing.T, advisorURL string, openAI provider.Provider) *testEnv {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
@@ -69,7 +76,7 @@ func setupTestEnv(t *testing.T, advisorURL string) *testEnv {
 	asyncLogger := observability.NewAsyncLoggerWithWriter(1000, &logBuf)
 
 	router := ProviderRouter{
-		OpenAI:    provider.NewMockProvider(1, 2),
+		OpenAI:    openAI,
 		Anthropic: provider.NewMockProvider(1, 2),
 		Mock:      provider.NewMockProvider(1, 2),
 	}
@@ -325,6 +332,85 @@ func TestChatCompletions_AgentBoundKey_SpendsAsItsAgent(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &errResp)
 	if errResp.Error.Reason != "agent_mismatch" {
 		t.Errorf("reason = %q, want agent_mismatch", errResp.Error.Reason)
+	}
+}
+
+func TestChatCompletions_AgentRequest_ToolCallsRoundTrip(t *testing.T) {
+	var upstream map[string]json.RawMessage
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&upstream)
+		w.Write([]byte(`{"id":"c1","object":"chat.completion","model":"gpt-4o-mini","choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"bash","arguments":"{\"cmd\":\"ls\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":40,"completion_tokens":9,"total_tokens":49}}`))
+	}))
+	defer srv.Close()
+
+	env := setupTestEnvWithOpenAI(t, "", provider.NewOpenAIProvider("k", srv.URL))
+	key := issueKey(t, env.sqlMock, "tenant-agent", "agent")
+	env.configCache.Seed("tenant-agent", "", "", budget.Limits{TokenLimit: 100000})
+
+	// Content parts, a tool result and a tool schema: what OpenCode-style
+	// agents send on every turn.
+	body := map[string]any{
+		"model": "gpt-4o-mini",
+		"messages": []any{
+			map[string]any{"role": "system", "content": "agent"},
+			map[string]any{"role": "user", "content": []any{map[string]any{"type": "text", "text": "list files"}}},
+			map[string]any{"role": "assistant", "content": nil, "tool_calls": []any{map[string]any{"id": "call_0", "type": "function", "function": map[string]any{"name": "bash", "arguments": "{}"}}}},
+			map[string]any{"role": "tool", "tool_call_id": "call_0", "content": "ok"},
+		},
+		"tools": []any{map[string]any{"type": "function", "function": map[string]any{"name": "bash", "parameters": map[string]any{"type": "object"}}}},
+	}
+	w := doRequest(env.router, http.MethodPost, "/v1/chat/completions", key, body, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if upstream["tools"] == nil || !strings.Contains(string(upstream["messages"]), `"tool_call_id":"call_0"`) {
+		t.Errorf("tools/tool messages did not reach the provider: %v", upstream)
+	}
+	var resp struct {
+		Choices []struct {
+			Message struct {
+				ToolCalls []struct {
+					ID string `json:"id"`
+				} `json:"tool_calls"`
+			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
+		} `json:"choices"`
+		CostUSD float64 `json:"cost_usd"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if len(resp.Choices) != 1 || resp.Choices[0].FinishReason != "tool_calls" || len(resp.Choices[0].Message.ToolCalls) != 1 || resp.Choices[0].Message.ToolCalls[0].ID != "call_1" {
+		t.Errorf("tool calls lost on the way back: %s", w.Body.String())
+	}
+	if resp.CostUSD <= 0 {
+		t.Errorf("cost_usd = %v, want the gateway's spend annotation", resp.CostUSD)
+	}
+}
+
+func TestChatCompletions_ContentPartsAccepted_Mock(t *testing.T) {
+	env := setupTestEnv(t, "")
+	key := issueKey(t, env.sqlMock, "tenant-parts", "agent")
+	env.configCache.Seed("tenant-parts", "", "", budget.Limits{TokenLimit: 100000})
+	w := doRequest(env.router, http.MethodPost, "/v1/chat/completions", key, map[string]any{
+		"model":    "mock-small",
+		"messages": []any{map[string]any{"role": "user", "content": []any{map[string]any{"type": "text", "text": "hi"}}}},
+	}, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("content-part array rejected: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestChatCompletions_InvalidBody_Returns400(t *testing.T) {
+	env := setupTestEnv(t, "")
+	key := issueKey(t, env.sqlMock, "tenant-bad", "agent")
+	for name, body := range map[string]any{
+		"no model":    map[string]any{"messages": []any{map[string]any{"role": "user", "content": "hi"}}},
+		"no messages": map[string]any{"model": "mock-small", "messages": []any{}},
+		"no role":     map[string]any{"model": "mock-small", "messages": []any{map[string]any{"content": "hi"}}},
+	} {
+		w := doRequest(env.router, http.MethodPost, "/v1/chat/completions", key, body, nil)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400", name, w.Code)
+		}
 	}
 }
 
