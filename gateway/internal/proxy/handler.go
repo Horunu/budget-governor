@@ -116,6 +116,16 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 
 	agentID := c.GetHeader("X-Agent-Id")
 	taskID := c.GetHeader("X-Task-Id")
+	// A key issued to one agent always spends as that agent: the header is
+	// optional and may not name someone else, so a member can neither skip
+	// their own cap nor spend from a teammate's.
+	if identity.AgentID != "" {
+		if agentID != "" && agentID != identity.AgentID {
+			c.JSON(http.StatusForbidden, ErrorResponse{}.withMessage("this api key belongs to agent "+identity.AgentID+"; X-Agent-Id must match or be omitted", "agent_mismatch"))
+			return
+		}
+		agentID = identity.AgentID
+	}
 
 	req := body.toProviderRequest()
 	req.TenantID = identity.TenantID

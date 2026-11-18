@@ -52,8 +52,8 @@ func TestStore_Authenticate_CacheMissQueriesDBAndVerifies(t *testing.T) {
 		t.Fatalf("HashKey: %v", err)
 	}
 
-	rows := sqlmock.NewRows([]string{"id", "tenant_id", "key_prefix", "hashed_key", "scopes", "revoked_at"}).
-		AddRow("key-1", "tenant-acme", rawKey[:keyPrefixLen], hashed, `["admin"]`, nil)
+	rows := sqlmock.NewRows([]string{"id", "tenant_id", "key_prefix", "hashed_key", "scopes", "revoked_at", "agent_id"}).
+		AddRow("key-1", "tenant-acme", rawKey[:keyPrefixLen], hashed, `["admin"]`, nil, "")
 	mock.ExpectQuery("SELECT id, tenant_id, key_prefix, hashed_key, scopes, revoked_at").
 		WithArgs(rawKey[:keyPrefixLen]).
 		WillReturnRows(rows)
@@ -87,8 +87,8 @@ func TestStore_Authenticate_CacheHitSkipsDB(t *testing.T) {
 		t.Fatalf("HashKey: %v", err)
 	}
 
-	rows := sqlmock.NewRows([]string{"id", "tenant_id", "key_prefix", "hashed_key", "scopes", "revoked_at"}).
-		AddRow("key-2", "tenant-beta", rawKey[:keyPrefixLen], hashed, `["agent"]`, nil)
+	rows := sqlmock.NewRows([]string{"id", "tenant_id", "key_prefix", "hashed_key", "scopes", "revoked_at", "agent_id"}).
+		AddRow("key-2", "tenant-beta", rawKey[:keyPrefixLen], hashed, `["agent"]`, nil, "agent-beta")
 	// Expect exactly ONE query -- the second Authenticate call must be
 	// served entirely from cache.
 	mock.ExpectQuery("SELECT id, tenant_id, key_prefix, hashed_key, scopes, revoked_at").
@@ -96,8 +96,10 @@ func TestStore_Authenticate_CacheHitSkipsDB(t *testing.T) {
 		WillReturnRows(rows)
 
 	store := NewStore(db, time.Minute, testLogger())
-	if _, err := store.Authenticate(context.Background(), rawKey); err != nil {
+	if id, err := store.Authenticate(context.Background(), rawKey); err != nil {
 		t.Fatalf("unexpected error on first call: %v", err)
+	} else if id.AgentID != "agent-beta" {
+		t.Errorf("AgentID = %q, want agent-beta (key bound to one agent)", id.AgentID)
 	}
 	if _, err := store.Authenticate(context.Background(), rawKey); err != nil {
 		t.Fatalf("unexpected error on second (cached) call: %v", err)
@@ -119,7 +121,7 @@ func TestStore_Authenticate_WrongKeyRejected(t *testing.T) {
 	hashed, _ := HashKey(correctKey)
 
 	prefix := wrongKey[:keyPrefixLen]
-	rows := sqlmock.NewRows([]string{"id", "tenant_id", "key_prefix", "hashed_key", "scopes", "revoked_at"})
+	rows := sqlmock.NewRows([]string{"id", "tenant_id", "key_prefix", "hashed_key", "scopes", "revoked_at", "agent_id"})
 	// Simulate: prefix lookup returns no matching row for this key's
 	// prefix (distinct prefixes in this test), so it should be reported
 	// as not found rather than incorrectly authenticated.

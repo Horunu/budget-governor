@@ -32,7 +32,11 @@ const (
 type Identity struct {
 	TenantID string
 	KeyID    string
-	Scopes   map[Scope]bool
+	// AgentID is set when the key was issued to one agent (team member or
+	// bot) via POST /v1/agents. Empty means a tenant-wide key, which may
+	// still name an agent with the X-Agent-Id header.
+	AgentID string
+	Scopes  map[Scope]bool
 }
 
 func (i Identity) HasScope(s Scope) bool {
@@ -53,6 +57,7 @@ type keyRecord struct {
 	HashedKey string
 	Scopes    []string
 	RevokedAt sql.NullTime
+	AgentID   string
 }
 
 type cacheEntry struct {
@@ -130,7 +135,7 @@ func (s *Store) lookupAndVerify(ctx context.Context, rawKey string) (Identity, e
 	prefix := rawKey[:keyPrefixLen]
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, tenant_id, key_prefix, hashed_key, scopes, revoked_at
+		SELECT id, tenant_id, key_prefix, hashed_key, scopes, revoked_at, COALESCE(agent_id, '')
 		FROM api_keys
 		WHERE key_prefix = $1 AND revoked_at IS NULL
 	`, prefix)
@@ -142,7 +147,7 @@ func (s *Store) lookupAndVerify(ctx context.Context, rawKey string) (Identity, e
 	for rows.Next() {
 		var rec keyRecord
 		var scopesRaw []byte // JSONB array, e.g. ["admin","agent"]
-		if err := rows.Scan(&rec.ID, &rec.TenantID, &rec.KeyPrefix, &rec.HashedKey, &scopesRaw, &rec.RevokedAt); err != nil {
+		if err := rows.Scan(&rec.ID, &rec.TenantID, &rec.KeyPrefix, &rec.HashedKey, &scopesRaw, &rec.RevokedAt, &rec.AgentID); err != nil {
 			return Identity{}, err
 		}
 		if bcrypt.CompareHashAndPassword([]byte(rec.HashedKey), []byte(rawKey)) == nil {
@@ -153,6 +158,7 @@ func (s *Store) lookupAndVerify(ctx context.Context, rawKey string) (Identity, e
 			return Identity{
 				TenantID: rec.TenantID,
 				KeyID:    rec.ID,
+				AgentID:  rec.AgentID,
 				Scopes:   scopes,
 			}, nil
 		}

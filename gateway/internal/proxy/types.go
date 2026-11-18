@@ -16,8 +16,8 @@ type ClientMessage struct {
 
 // ClientChatRequest is the request body clients send to
 // POST /v1/chat/completions. tenant/agent/task scoping comes from the
-// API key (tenant) and optional X-Agent-Id / X-Task-Id headers, not the
-// body, so the body stays byte-compatible with the real OpenAI API.
+// API key (tenant, plus the agent for agent-bound keys) and optional
+// X-Agent-Id / X-Task-Id headers, not the body, so the body stays byte-compatible with the real OpenAI API.
 type ClientChatRequest struct {
 	Model       string          `json:"model" binding:"required"`
 	Messages    []ClientMessage `json:"messages" binding:"required,min=1"`

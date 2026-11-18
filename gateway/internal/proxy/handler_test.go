@@ -97,6 +97,12 @@ func setupTestEnv(t *testing.T, advisorURL string) *testEnv {
 // the raw key string clients should send.
 func issueKey(t *testing.T, mock sqlmock.Sqlmock, tenantID string, scopes string) string {
 	t.Helper()
+	return issueAgentKey(t, mock, tenantID, scopes, "")
+}
+
+// issueAgentKey is issueKey for a key bound to one agent ("" = tenant-wide).
+func issueAgentKey(t *testing.T, mock sqlmock.Sqlmock, tenantID, scopes, agentID string) string {
+	t.Helper()
 	rawKey := "bg_live_" + tenantID + "_" + scopes
 	if len(rawKey) < 12 {
 		rawKey = rawKey + "000000000000"
@@ -106,8 +112,8 @@ func issueKey(t *testing.T, mock sqlmock.Sqlmock, tenantID string, scopes string
 		t.Fatalf("HashKey: %v", err)
 	}
 	prefix := rawKey[:12]
-	rows := sqlmock.NewRows([]string{"id", "tenant_id", "key_prefix", "hashed_key", "scopes", "revoked_at"}).
-		AddRow("key-"+tenantID, tenantID, prefix, hashed, `["`+scopes+`"]`, nil)
+	rows := sqlmock.NewRows([]string{"id", "tenant_id", "key_prefix", "hashed_key", "scopes", "revoked_at", "agent_id"}).
+		AddRow("key-"+tenantID, tenantID, prefix, hashed, `["`+scopes+`"]`, nil, agentID)
 	mock.ExpectQuery("SELECT id, tenant_id, key_prefix, hashed_key, scopes, revoked_at").
 		WithArgs(prefix).
 		WillReturnRows(rows)
@@ -287,6 +293,38 @@ func TestChatCompletions_BudgetPressure_AdvisorSwitchesModel(t *testing.T) {
 	}
 	if resp.BudgetAdvisory == "" {
 		t.Error("expected budget_advisory to be set")
+	}
+}
+
+func TestChatCompletions_AgentBoundKey_SpendsAsItsAgent(t *testing.T) {
+	env := setupTestEnv(t, "")
+	key := issueAgentKey(t, env.sqlMock, "tenant-team", "agent", "agent-bob")
+	env.configCache.Seed("tenant-team", "", "", budget.Limits{TokenLimit: 100000})
+	// Bob's own cap is tiny, so if the gateway applies it the call is
+	// rejected with an agent-level reason even though the team has room.
+	env.configCache.Seed("tenant-team", "agent-bob", "", budget.Limits{TokenLimit: 5})
+
+	msg := ClientChatRequest{Model: "mock-small", Messages: []ClientMessage{{Role: "user", Content: "hi"}}}
+
+	// No header: still capped as Bob, not just the team pool.
+	w := doRequest(env.router, http.MethodPost, "/v1/chat/completions", key, msg, nil)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("no header: status = %d, body = %s, want 429 from bob's cap", w.Code, w.Body.String())
+	}
+	var errResp ErrorResponse
+	json.Unmarshal(w.Body.Bytes(), &errResp)
+	if errResp.Error.Reason != string(budget.ReasonOverAgentBudget) {
+		t.Errorf("reason = %q, want %s", errResp.Error.Reason, budget.ReasonOverAgentBudget)
+	}
+
+	// Naming a teammate is refused outright (key is cached, no new DB row needed).
+	w = doRequest(env.router, http.MethodPost, "/v1/chat/completions", key, msg, map[string]string{"X-Agent-Id": "agent-sarah"})
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("spoofed header: status = %d, want 403", w.Code)
+	}
+	json.Unmarshal(w.Body.Bytes(), &errResp)
+	if errResp.Error.Reason != "agent_mismatch" {
+		t.Errorf("reason = %q, want agent_mismatch", errResp.Error.Reason)
 	}
 }
 
