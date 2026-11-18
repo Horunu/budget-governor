@@ -110,7 +110,7 @@ def cmd_cap(args: argparse.Namespace) -> None:
     else:
         set_daily_cap(args.daily)
         print(f"team: cap set to ${args.daily:g}/day")
-    print("(the gateway picks this up within its config refresh interval, ~5s by default)")
+    print("(the gateway picks this up within BUDGET_CACHE_TTL_SECONDS)")
 
 
 def cmd_list(_: argparse.Namespace) -> None:
@@ -137,7 +137,7 @@ def cmd_rotate(args: argparse.Namespace) -> None:
     status, resp = call("POST", f"/v1/agents/{member(args.name)['id']}/rotate-key")
     if status != 200:
         die(f"rotating key failed: {status} {resp}")
-    print(f"Old key for {args.name} revoked (the gateway stops accepting it within AUTH_CACHE_TTL_SECONDS, 60s by default).")
+    print(f"Old key for {args.name} revoked (the gateway stops accepting it within AUTH_CACHE_TTL_SECONDS).")
     print_setup(args.name, resp["api_key"])
 
 
@@ -145,7 +145,7 @@ def cmd_remove(args: argparse.Namespace) -> None:
     status, resp = call("DELETE", f"/v1/agents/{member(args.name)['id']}")
     if status != 204:
         die(f"removing member failed: {status} {resp}")
-    print(f"{args.name}'s keys revoked (effective within AUTH_CACHE_TTL_SECONDS, 60s by default). Spend history is kept.")
+    print(f"{args.name}'s keys revoked (effective within AUTH_CACHE_TTL_SECONDS). Spend history is kept.")
 
 
 def main() -> None:

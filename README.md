@@ -3,6 +3,12 @@
 Budget Governor sits between your AI agents and the LLM providers they call
 (OpenAI, Anthropic) and stops them from spending more money than you allowed.
 
+The typical setup: a team shares one company API key, several people run
+agents on it, and you want each person capped so one runaway loop cannot
+burn the month's budget. The real key stays on the gateway; each member
+gets their own gateway key with its own daily cap. See
+[docs/team-setup.md](docs/team-setup.md) for the 10-minute version.
+
 Every request goes through it first. It checks how much budget the tenant,
 the agent, and the task have left. If there is enough, it forwards the call
 and records what was actually spent. If there is not, it blocks the call and
@@ -76,6 +82,10 @@ Then open **Grafana** at http://localhost:3000 (`admin` / `admin`). The
 are already set up. Prometheus is at http://localhost:9091.
 
 Other useful targets: `make down`, `make logs`, `make test`.
+
+To set it up for real people instead of the demo tenants, use
+`scripts/team.py` (init a team, add members with caps, list spend, rotate or
+remove keys) as described in [docs/team-setup.md](docs/team-setup.md).
 
 ## You do not need API keys to try it
 
