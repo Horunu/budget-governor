@@ -1,0 +1,76 @@
+name: aws-deploy
+
+# Build + push to ECR + roll ECS services. Runs on push to main, and
+# manually. No `terraform apply` -- infra changes stay opt-in to avoid
+# surprise bills while the stack is in the 29-day demo window.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "gateway/**"
+      - "controlplane/**"
+      - "advisor/**"
+      - "providers/**"
+      - ".github/workflows/aws-deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: eu-west-2
+  NAME_PREFIX: bgov
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - { name: gateway,      context: gateway,      dockerfile: gateway/Dockerfile }
+          - { name: controlplane, context: controlplane, dockerfile: controlplane/Dockerfile }
+          - { name: advisor,      context: .,            dockerfile: advisor/Dockerfile }
+          - { name: migrate,      context: .,            dockerfile: scripts/Dockerfile.migrate }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - id: login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push
+        env:
+          REGISTRY: ${{ steps.login.outputs.registry }}
+          REPO: ${{ env.NAME_PREFIX }}/${{ matrix.service.name }}
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --file ${{ matrix.service.dockerfile }} \
+            --tag "$REGISTRY/$REPO:${{ github.sha }}" \
+            --tag "$REGISTRY/$REPO:latest" \
+            --push \
+            ${{ matrix.service.context }}
+
+  roll:
+    needs: build-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Force new deployment
+        run: |
+          for svc in gateway advisor controlplane; do
+            aws ecs update-service \
+              --cluster ${NAME_PREFIX}-cluster \
+              --service $svc \
+              --force-new-deployment >/dev/null
+            echo "rolled $svc"
+          done

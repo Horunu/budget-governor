@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 430" width="1200" height="430" role="img" aria-label="Budget Governor: Bob's and Sarah's agents pass through the gateway to Anthropic and OpenAI; Kyle's agent is over its daily cap and is stopped with a 429">
+  <defs>
+    <style>
+      .serif { font-family: "Iowan Old Style", Charter, "Palatino Linotype", Palatino, Georgia, serif; }
+      .sans { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .ink { fill: #1d1b17; } .soft { fill: #5a554b; } .faint { fill: #8a8375; } .red { fill: #c8391f; }
+      .line { fill: none; stroke: #1d1b17; stroke-width: 1.5; }
+      .line-red { fill: none; stroke: #c8391f; stroke-width: 1.5; stroke-dasharray: 5 5; }
+    </style>
+    <path id="p-bob" d="M300 190 H420 Q440 190 440 210 V250 Q440 270 460 270 H560"/>
+    <path id="p-sarah" d="M300 280 H560"/>
+    <path id="p-kyle" d="M300 370 H420 Q440 370 440 350 V310 Q440 290 460 290 H540"/>
+    <path id="p-out-a" d="M700 270 H800 Q820 270 820 250 V215 Q820 195 840 195 H960"/>
+    <path id="p-out-o" d="M700 290 H800 Q820 290 820 310 V345 Q820 365 840 365 H960"/>
+  </defs>
+
+  <rect width="1200" height="430" fill="#f4f1ea"/>
+  <rect x="0.5" y="0.5" width="1199" height="429" fill="none" stroke="#d9d3c5"/>
+
+  <!-- title -->
+  <text x="60" y="76" class="serif ink" font-size="42" font-weight="600" letter-spacing="-0.5">Budget Governor</text>
+  <text x="60" y="108" class="sans soft" font-size="18">One shared API key. Every teammate's agent spends from its own daily cap.</text>
+  <line x1="60" y1="132" x2="1140" y2="132" stroke="#d9d3c5"/>
+
+  <!-- wiring -->
+  <use href="#p-bob" class="line"/>
+  <use href="#p-sarah" class="line"/>
+  <path class="line-red" d="M300 370 H420 Q440 370 440 350 V310 Q440 290 460 290 H540"/>
+  <use href="#p-out-a" class="line"/>
+  <use href="#p-out-o" class="line"/>
+  <line x1="545" y1="282" x2="545" y2="298" stroke="#c8391f" stroke-width="3"/>
+
+  <!-- agents: name + ledger meter (10 ticks = $25) -->
+  <g class="sans">
+    <text x="60" y="186" class="ink" font-size="17" font-weight="600">Bob</text>
+    <text x="300" y="186" class="mono soft" font-size="12" text-anchor="end">$12 / $25</text>
+    <g fill="#1d1b17"><rect x="60" y="196" width="14" height="6"/><rect x="78" y="196" width="14" height="6"/><rect x="96" y="196" width="14" height="6"/><rect x="114" y="196" width="14" height="6"/><rect x="132" y="196" width="14" height="6"/></g>
+    <g fill="#d9d3c5"><rect x="150" y="196" width="14" height="6"/><rect x="168" y="196" width="14" height="6"/><rect x="186" y="196" width="14" height="6"/><rect x="204" y="196" width="14" height="6"/><rect x="222" y="196" width="14" height="6"/></g>
+
+    <text x="60" y="276" class="ink" font-size="17" font-weight="600">Sarah</text>
+    <text x="300" y="276" class="mono soft" font-size="12" text-anchor="end">$4 / $25</text>
+    <g fill="#1d1b17"><rect x="60" y="286" width="14" height="6"/><rect x="78" y="286" width="14" height="6"/></g>
+    <g fill="#d9d3c5"><rect x="96" y="286" width="14" height="6"/><rect x="114" y="286" width="14" height="6"/><rect x="132" y="286" width="14" height="6"/><rect x="150" y="286" width="14" height="6"/><rect x="168" y="286" width="14" height="6"/><rect x="186" y="286" width="14" height="6"/><rect x="204" y="286" width="14" height="6"/><rect x="222" y="286" width="14" height="6"/></g>
+
+    <text x="60" y="366" class="ink" font-size="17" font-weight="600">Kyle</text>
+    <text x="300" y="366" class="mono red" font-size="12" text-anchor="end">$25 / $25</text>
+    <g fill="#c8391f"><rect x="60" y="376" width="14" height="6"/><rect x="78" y="376" width="14" height="6"/><rect x="96" y="376" width="14" height="6"/><rect x="114" y="376" width="14" height="6"/><rect x="132" y="376" width="14" height="6"/><rect x="150" y="376" width="14" height="6"/><rect x="168" y="376" width="14" height="6"/><rect x="186" y="376" width="14" height="6"/><rect x="204" y="376" width="14" height="6"/><rect x="222" y="376" width="14" height="6"/></g>
+  </g>
+
+  <!-- gateway -->
+  <rect x="560" y="180" width="140" height="200" fill="#1d1b17"/>
+  <text x="630" y="216" class="serif" fill="#f4f1ea" font-size="22" font-weight="600" text-anchor="middle">Gateway</text>
+  <line x1="580" y1="232" x2="680" y2="232" stroke="#4a463e"/>
+  <g class="sans" fill="#d9d3c5" font-size="13">
+    <text x="580" y="258">who is it?</text>
+    <text x="580" y="282">can they pay?</text>
+    <text x="580" y="306">forward or stop</text>
+    <text x="580" y="330">record the cost</text>
+  </g>
+  <text x="630" y="404" class="serif faint" font-size="14" font-style="italic" text-anchor="middle">the real key never leaves here</text>
+
+  <!-- providers -->
+  <g class="sans">
+    <rect x="960" y="189" width="12" height="12" fill="#1d1b17"/>
+    <text x="984" y="201" class="ink" font-size="18" font-weight="600">Anthropic</text>
+    <rect x="960" y="359" width="12" height="12" fill="#1d1b17"/>
+    <text x="984" y="371" class="ink" font-size="18" font-weight="600">OpenAI</text>
+  </g>
+
+  <!-- the moment: calls travel; Kyle's stops at the gate -->
+  <g fill="#1d1b17">
+    <circle r="4.5"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;0.4;1" calcMode="linear"><mpath href="#p-bob"/></animateMotion></circle>
+    <circle r="4.5" opacity="0"><animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.4;0.41;0.8;0.81" dur="4s" repeatCount="indefinite"/><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.4;0.8;1" calcMode="linear"><mpath href="#p-out-a"/></animateMotion></circle>
+    <circle r="4.5"><animateMotion dur="4s" begin="1.3s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;0.4;1" calcMode="linear"><mpath href="#p-sarah"/></animateMotion></circle>
+    <circle r="4.5" opacity="0"><animate attributeName="opacity" begin="1.3s" values="0;0;1;1;0" keyTimes="0;0.4;0.41;0.8;0.81" dur="4s" repeatCount="indefinite"/><animateMotion dur="4s" begin="1.3s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.4;0.8;1" calcMode="linear"><mpath href="#p-out-o"/></animateMotion></circle>
+  </g>
+  <circle r="4.5" fill="#c8391f">
+    <animateMotion dur="4s" begin="0.6s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;0.45;1" calcMode="linear"><mpath href="#p-kyle"/></animateMotion>
+    <animate attributeName="opacity" begin="0.6s" values="1;1;0;0" keyTimes="0;0.7;0.75;1" dur="4s" repeatCount="indefinite"/>
+  </circle>
+
+  <!-- rubber stamp -->
+  <g transform="translate(360 326) rotate(-7)" opacity="0">
+    <animate attributeName="opacity" begin="0.6s" values="0;0;1;1;0;0" keyTimes="0;0.45;0.47;0.85;0.9;1" dur="4s" repeatCount="indefinite"/>
+    <rect x="-70" y="-19" width="140" height="38" rx="3" fill="#f4f1ea" stroke="#c8391f" stroke-width="2"/>
+    <rect x="-65" y="-14" width="130" height="28" rx="2" fill="none" stroke="#c8391f" stroke-width="0.75"/>
+    <text x="0" y="5" class="mono" fill="#c8391f" font-size="14" font-weight="700" text-anchor="middle" letter-spacing="1">429 OVER CAP</text>
+  </g>
+</svg>

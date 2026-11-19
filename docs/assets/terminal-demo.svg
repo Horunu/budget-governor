@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 900 520" width="900" height="520" role="img" aria-label="Terminal showing team.py adding a member, listing caps and spend, and the gateway returning 429 over_agent_budget">
+  <defs>
+    <style>
+      text { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; white-space: pre; }
+      .p { fill: #7c5cff; } .c { fill: #e6e9ff; } .o { fill: #a9b1d6; } .dim { fill: #6f78a8; }
+      .g { fill: #3ee6a8; } .r { fill: #ff5c7a; } .y { fill: #ffd166; }
+      .l { opacity: 0; animation: show 14s steps(1) infinite; }
+      @keyframes show { 0% { opacity: 0; } 2% { opacity: 1; } 96% { opacity: 1; } 100% { opacity: 0; } }
+    </style>
+  </defs>
+  <rect width="900" height="520" rx="14" fill="#0b1020"/>
+  <rect width="900" height="40" rx="14" fill="#151b33"/>
+  <rect y="26" width="900" height="14" fill="#151b33"/>
+  <circle cx="24" cy="20" r="6" fill="#ff5f57"/><circle cx="44" cy="20" r="6" fill="#febc2e"/><circle cx="64" cy="20" r="6" fill="#28c840"/>
+  <text x="450" y="25" text-anchor="middle" class="dim" style="font-size:13px">budget-governor — zsh</text>
+
+  <g class="l" style="animation-delay:0s"><text x="24" y="76"><tspan class="p">❯ </tspan><tspan class="c">python3 scripts/team.py add kyle --daily 25</tspan></text></g>
+  <g class="l" style="animation-delay:.6s"><text x="24" y="100" class="g">Added kyle with a $25/day cap.</text>
+    <text x="24" y="124" class="o">  export OPENAI_BASE_URL=https://gateway.your-team.dev/v1</text>
+    <text x="24" y="148" class="o">  export OPENAI_API_KEY=bg_live_••••••••••••••••</text></g>
+
+  <g class="l" style="animation-delay:1.6s"><text x="24" y="188"><tspan class="p">❯ </tspan><tspan class="c">python3 scripts/team.py list</tspan></text></g>
+  <g class="l" style="animation-delay:2.2s">
+    <text x="24" y="212" class="dim">member               status      cap/day   spent 24h</text>
+    <text x="24" y="236" class="c">bob                  <tspan class="g">active</tspan>       $25.00      $12.40</text>
+    <text x="24" y="260" class="c">sarah                <tspan class="g">active</tspan>       $25.00       $4.10</text>
+    <text x="24" y="284" class="c">kyle                 <tspan class="g">active</tspan>       $25.00      <tspan class="r">$25.00</tspan></text>
+    <text x="24" y="308" class="c">TEAM TOTAL                       $100.00      $41.50</text>
+  </g>
+
+  <g class="l" style="animation-delay:3.6s"><text x="24" y="348" class="dim"># kyle's agent keeps looping…</text></g>
+  <g class="l" style="animation-delay:4.2s"><text x="24" y="372" class="y">POST /v1/chat/completions  model=claude-sonnet-5</text></g>
+  <g class="l" style="animation-delay:4.8s"><text x="24" y="396" class="r">429 {"reason":"over_agent_budget"}</text>
+    <text x="24" y="420" class="dim">bob and sarah keep working. the team budget is untouched.</text></g>
+
+  <g class="l" style="animation-delay:6s">
+    <rect x="24" y="444" width="852" height="52" rx="10" fill="#1b2240" stroke="#2f3a66"/>
+    <text x="44" y="467" class="c"><tspan class="y">Slack #ai-spend</tspan>  kyle on team acme has used 100% of their daily cap</text>
+    <text x="44" y="486" class="dim">   raise it: python3 scripts/team.py cap kyle --daily 40</text>
+  </g>
+</svg>

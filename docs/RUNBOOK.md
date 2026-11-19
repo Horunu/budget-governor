@@ -22,6 +22,21 @@ way.
 
 ## Alert runbook entries
 
+### MemberNearDailyCap
+
+**Fires when**: a member (or the team total) has spent more than 80% of
+their daily dollar cap over the last 24h, for 1 minute. The alert names the
+team and member.
+
+**Likely cause**: a member's agent looping, a legitimately heavy day, or a
+cap that is too low.
+
+**Response**:
+1. `python3 scripts/team.py list` to see who is where.
+2. If it is a runaway agent, ask the member to stop it, or
+   `python3 scripts/team.py remove <name>` to cut them off immediately.
+3. If it is real work, raise it: `python3 scripts/team.py cap <name> --daily N`.
+
 ### BurnRateHigh
 
 **Fires when**: `predict_linear(bucket_saturation_ratio[15m], 3600) > 1`

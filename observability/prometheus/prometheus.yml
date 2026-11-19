@@ -8,10 +8,7 @@ rule_files:
 alerting:
   alertmanagers:
     - static_configs:
-        - targets: []  # Alertmanager not deployed in this build; alerts are
-                        # visible in Prometheus's own Alerts UI and are
-                        # written to be Alertmanager-ready (just add a
-                        # target here) -- see docs/DECISIONS.md.
+        - targets: ["alertmanager:9093"]  # routes to Slack, see observability/alertmanager/
 
 scrape_configs:
   - job_name: gateway

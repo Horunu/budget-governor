@@ -50,6 +50,14 @@ type Config struct {
 	AnthropicAPIKey  string
 	AnthropicBaseURL string
 
+	// SpendBackend selects the SpendWriter's sink: "postgres" (default,
+	// used by docker-compose and tests), "dynamo" (AWS deploy), or "both"
+	// to dual-write during a migration. See deploy/aws/terraform/dynamodb.tf
+	// for the table definition.
+	SpendBackend     string
+	SpendDynamoTable string
+	AWSRegion        string
+
 	Environment string
 }
 
@@ -74,7 +82,18 @@ func Load() (*Config, error) {
 		OpenAIBaseURL:            getEnv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
 		AnthropicAPIKey:          getEnv("ANTHROPIC_API_KEY", ""),
 		AnthropicBaseURL:         getEnv("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1"),
+		SpendBackend:             getEnv("SPEND_BACKEND", "postgres"),
+		SpendDynamoTable:         getEnv("SPEND_DYNAMO_TABLE", ""),
+		AWSRegion:                getEnv("AWS_REGION", "eu-west-2"),
 		Environment:              getEnv("ENVIRONMENT", "development"),
+	}
+	switch cfg.SpendBackend {
+	case "postgres", "dynamo", "both":
+	default:
+		return nil, fmt.Errorf("config: SPEND_BACKEND=%q (want postgres|dynamo|both)", cfg.SpendBackend)
+	}
+	if (cfg.SpendBackend == "dynamo" || cfg.SpendBackend == "both") && cfg.SpendDynamoTable == "" {
+		return nil, fmt.Errorf("config: SPEND_BACKEND=%s requires SPEND_DYNAMO_TABLE", cfg.SpendBackend)
 	}
 	if cfg.MockProviderLatencyMinMs > cfg.MockProviderLatencyMaxMs {
 		return nil, fmt.Errorf("config: MOCK_PROVIDER_LATENCY_MIN_MS (%d) > MOCK_PROVIDER_LATENCY_MAX_MS (%d)", cfg.MockProviderLatencyMinMs, cfg.MockProviderLatencyMaxMs)

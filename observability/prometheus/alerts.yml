@@ -21,6 +21,24 @@ groups:
             {{ $value | printf "%.2f" }} (projected).
           runbook: docs/RUNBOOK.md#burnratehigh
 
+      # Names the person: fires when a member (or the whole team) has used
+      # 80% of their daily dollar cap. Sourced from Postgres via the
+      # pg_member_budget query in postgres_queries.yaml.
+      - alert: MemberNearDailyCap
+        expr: |
+          pg_member_budget_used_ratio > 0.8
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.member }} on team {{ $labels.team }} has used {{ $value | humanizePercentage }} of their daily cap"
+          description: >
+            {{ $labels.member }} ({{ $labels.team }}) spent past 80% of their
+            daily dollar cap in the last 24h. At 100% the gateway starts
+            returning 429 for them. Raise it with
+            `python3 scripts/team.py cap {{ $labels.member }} --daily N`.
+          runbook: docs/RUNBOOK.md#memberneardailycap
+
       # Compares gateway-observed spend against provider-billed spend
       # (see reconciliation/job.py); sourced from Postgres via the
       # postgres_exporter custom query in

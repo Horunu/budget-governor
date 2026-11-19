@@ -3,7 +3,9 @@ package proxy
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -108,16 +110,30 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 	traceID := uuid.NewString()
 	identity := identityFrom(c)
 
-	var body ClientChatRequest
-	if err := c.ShouldBindJSON(&body); err != nil {
+	body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, maxRequestBytes))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{}.withMessage("could not read request body: "+err.Error(), "invalid_request"))
+		return
+	}
+	req, toolsText, err := parseChatRequest(body)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, ErrorResponse{}.withMessage("invalid request body: "+err.Error(), "invalid_request"))
 		return
 	}
 
 	agentID := c.GetHeader("X-Agent-Id")
 	taskID := c.GetHeader("X-Task-Id")
+	// A key issued to one agent always spends as that agent: the header is
+	// optional and may not name someone else, so a member can neither skip
+	// their own cap nor spend from a teammate's.
+	if identity.AgentID != "" {
+		if agentID != "" && agentID != identity.AgentID {
+			c.JSON(http.StatusForbidden, ErrorResponse{}.withMessage("this api key belongs to agent "+identity.AgentID+"; X-Agent-Id must match or be omitted", "agent_mismatch"))
+			return
+		}
+		agentID = identity.AgentID
+	}
 
-	req := body.toProviderRequest()
 	req.TenantID = identity.TenantID
 	req.AgentID = agentID
 	req.TaskID = taskID
@@ -134,7 +150,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
-	estTokensIn := provider.EstimateMessagesTokens(req.System, req.Messages)
+	estTokensIn := provider.EstimateMessagesTokens(req.System, req.Messages) + provider.EstimateTokens(toolsText)
 	estTokensOut := req.MaxTokens
 	if estTokensOut <= 0 {
 		estTokensOut = defaultOutputTokenEstimate
@@ -311,6 +327,11 @@ func (h *Handler) doDispatch(c *gin.Context, req provider.Request, refs []budget
 
 	h.finish(c, req, refs, budget.Decision{Allowed: true}, decisionLabel, reason, start, resp.Usage, actualUSD, http.StatusOK)
 
+	if resp.Raw != nil {
+		writeRawCompletion(c, resp.Raw, actualUSD, advice)
+		return
+	}
+
 	out := ClientChatResponse{
 		ID:      resp.ID,
 		Object:  "chat.completion",
@@ -442,4 +463,24 @@ func (e ErrorResponse) withMessage(message, reason string) ErrorResponse {
 	e.Error.Message = message
 	e.Error.Reason = reason
 	return e
+}
+
+// maxRequestBytes caps one request body. Agent requests carry whole files
+// and long histories, so this is generous.
+const maxRequestBytes = 32 << 20
+
+// writeRawCompletion returns an upstream chat.completion body unchanged
+// (tool_calls included) plus the gateway's additive budget fields.
+func writeRawCompletion(c *gin.Context, raw json.RawMessage, costUSD float64, advice string) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		c.JSON(http.StatusBadGateway, ErrorResponse{}.withMessage("provider returned invalid JSON", "upstream_error"))
+		return
+	}
+	obj["cost_usd"], _ = json.Marshal(costUSD)
+	if advice != "" {
+		obj["budget_advisory"], _ = json.Marshal(advice)
+		c.Header("X-Budget-Advisory", advice)
+	}
+	c.JSON(http.StatusOK, obj)
 }

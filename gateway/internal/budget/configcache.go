@@ -76,28 +76,7 @@ func (c *ConfigCache) Refresh(ctx context.Context) error {
 		if r.TaskID.Valid {
 			key.TaskID = r.TaskID.String
 		}
-		refillPerSec := 0.0
-		if r.RefillPerMinute.Valid {
-			refillPerSec = r.RefillPerMinute.Float64 / 60.0
-		}
-		limits := Limits{}
-		if r.TokenLimit.Valid {
-			limits.TokenLimit = r.TokenLimit.Int64
-			limits.RefillTokensPerSec = refillPerSec
-		}
-		if r.DollarLimit.Valid {
-			limits.DollarLimit = r.DollarLimit.Float64
-			// Dollar refill tracks the same per-minute cadence as the
-			// token refill, scaled to the dollar ceiling, so a tenant's
-			// "burn allowance" replenishes on one consistent schedule
-			// regardless of which dimension (tokens vs dollars) is the
-			// binding constraint for a given call.
-			if r.TokenLimit.Valid && r.TokenLimit.Int64 > 0 {
-				limits.RefillUSDPerSec = refillPerSec * (r.DollarLimit.Float64 / float64(r.TokenLimit.Int64))
-			} else {
-				limits.RefillUSDPerSec = r.DollarLimit.Float64 / 60.0
-			}
-		}
+		limits := limitsFromRow(r)
 		next[key] = limits
 	}
 	if err := rows.Err(); err != nil {
@@ -169,4 +148,34 @@ func (c *ConfigCache) Resolve(tenantID, agentID, taskID string) []BucketRef {
 		refs = append(refs, BucketRef{Scope: ScopeTenant, Key: Key(tenantID, "", "", ScopeTenant), Limits: l})
 	}
 	return refs
+}
+
+// limitsFromRow turns one budgets row into enforcement limits.
+// refill_rate_per_min is in the unit of the row's primary limit: tokens
+// per minute when token_limit is set, dollars per minute when only
+// dollar_limit is set.
+func limitsFromRow(r row) Limits {
+	refillPerSec := 0.0
+	if r.RefillPerMinute.Valid {
+		refillPerSec = r.RefillPerMinute.Float64 / 60.0
+	}
+	limits := Limits{}
+	if r.TokenLimit.Valid {
+		limits.TokenLimit = r.TokenLimit.Int64
+		limits.RefillTokensPerSec = refillPerSec
+	}
+	if r.DollarLimit.Valid {
+		limits.DollarLimit = r.DollarLimit.Float64
+		if r.TokenLimit.Valid && r.TokenLimit.Int64 > 0 {
+			// Dollar refill tracks the token refill cadence, scaled to the
+			// dollar ceiling, so both dimensions replenish on one schedule.
+			limits.RefillUSDPerSec = refillPerSec * (r.DollarLimit.Float64 / float64(r.TokenLimit.Int64))
+		} else {
+			// Dollar-only budget: the rate is already dollars per minute.
+			// (This used to be DollarLimit/60, which refilled the whole
+			// budget every minute and ignored the configured rate.)
+			limits.RefillUSDPerSec = refillPerSec
+		}
+	}
+	return limits
 }

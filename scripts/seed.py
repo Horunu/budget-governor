@@ -33,7 +33,8 @@ def request(method: str, url: str, headers: dict | None = None, body: dict | Non
         req.add_header(k, v)
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
-            return resp.status, json.loads(resp.read().decode())
+            raw = resp.read().decode()
+            return resp.status, json.loads(raw) if raw else {}  # 204 has no body
     except urllib.error.HTTPError as e:
         try:
             return e.code, json.loads(e.read().decode())

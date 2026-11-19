@@ -38,3 +38,42 @@ pg_reconciliation_drift:
     - observed_at_unixtime:
         usage: GAUGE
         description: Unix timestamp the underlying reconciliation_drift row was created.
+
+# Per-member (and team-wide) spend over the last 24h against each dollar
+# cap, so alerts can name the person who is close to their limit. The
+# gateway's own saturation gauge only covers token limits and carries no
+# agent label. Caps set by scripts/team.py refill evenly over 24h, so
+# 24h spend at or above the cap means that bucket is effectively empty.
+pg_member_budget:
+  query: |
+    SELECT
+      t.name AS team,
+      COALESCE(a.name, '(team total)') AS member,
+      b.dollar_limit AS cap_usd,
+      COALESCE(SUM(s.cost_usd), 0) AS spent_24h_usd,
+      COALESCE(SUM(s.cost_usd), 0) / b.dollar_limit AS used_ratio
+    FROM budgets b
+    JOIN tenants t ON t.id = b.tenant_id
+    LEFT JOIN agents a ON a.id = b.agent_id
+    LEFT JOIN spend_events s
+      ON s.tenant_id = b.tenant_id
+     AND (b.agent_id IS NULL OR s.agent_id = b.agent_id)
+     AND s.created_at > now() - interval '24 hours'
+    WHERE b.task_id IS NULL AND b.dollar_limit > 0
+    GROUP BY t.name, a.name, b.dollar_limit
+  metrics:
+    - team:
+        usage: LABEL
+        description: Tenant (team) name.
+    - member:
+        usage: LABEL
+        description: Agent (member) name, or "(team total)" for the tenant-wide cap.
+    - cap_usd:
+        usage: GAUGE
+        description: Dollar cap on this budget.
+    - spent_24h_usd:
+        usage: GAUGE
+        description: Spend recorded in the last 24h against this budget, in USD.
+    - used_ratio:
+        usage: GAUGE
+        description: spent_24h_usd / cap_usd (1.0 = cap fully used).

@@ -2,10 +2,7 @@ package proxy
 
 import (
 	"context"
-	"database/sql"
-	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -36,7 +33,7 @@ type SpendEvent struct {
 // spend_write_dropped_total metric rather than backpressuring the
 // request that generated it.
 type SpendWriter struct {
-	db            *sql.DB
+	sink          SpendSink
 	ch            chan SpendEvent
 	flushInterval time.Duration
 	batchSize     int
@@ -44,9 +41,9 @@ type SpendWriter struct {
 	dropped       prometheus.Counter
 }
 
-func NewSpendWriter(db *sql.DB, queueCapacity, batchSize int, flushInterval time.Duration, logger *slog.Logger, dropped prometheus.Counter) *SpendWriter {
+func NewSpendWriter(sink SpendSink, queueCapacity, batchSize int, flushInterval time.Duration, logger *slog.Logger, dropped prometheus.Counter) *SpendWriter {
 	return &SpendWriter{
-		db:            db,
+		sink:          sink,
 		ch:            make(chan SpendEvent, queueCapacity),
 		flushInterval: flushInterval,
 		batchSize:     batchSize,
@@ -81,7 +78,7 @@ func (w *SpendWriter) Run(ctx context.Context) {
 		if len(batch) == 0 {
 			return
 		}
-		if err := w.writeBatch(context.Background(), batch); err != nil {
+		if err := w.sink.WriteBatch(context.Background(), batch); err != nil {
 			w.logger.Error("spend batch write failed", "batch_size", len(batch), "error", err)
 		}
 		batch = batch[:0]
@@ -115,34 +112,3 @@ func (w *SpendWriter) drainRemaining(batch *[]SpendEvent) {
 	}
 }
 
-func (w *SpendWriter) writeBatch(ctx context.Context, batch []SpendEvent) error {
-	const cols = 11
-	values := make([]string, 0, len(batch))
-	args := make([]interface{}, 0, len(batch)*cols)
-	for i, e := range batch {
-		base := i * cols
-		placeholders := make([]string, cols)
-		for j := 0; j < cols; j++ {
-			placeholders[j] = fmt.Sprintf("$%d", base+j+1)
-		}
-		values = append(values, "("+strings.Join(placeholders, ",")+")")
-
-		var agentID, taskID interface{}
-		if e.AgentID != "" {
-			agentID = e.AgentID
-		}
-		if e.TaskID != "" {
-			taskID = e.TaskID
-		}
-		args = append(args, e.TenantID, agentID, taskID, e.Model, e.TokensIn, e.TokensOut, e.CostUSD, e.TraceID, e.Decision, e.DecisionReason, e.CreatedAt)
-	}
-
-	query := fmt.Sprintf(`
-		INSERT INTO spend_events
-			(tenant_id, agent_id, task_id, model, tokens_in, tokens_out, cost_usd, trace_id, decision, decision_reason, created_at)
-		VALUES %s
-	`, strings.Join(values, ","))
-
-	_, err := w.db.ExecContext(ctx, query, args...)
-	return err
-}
