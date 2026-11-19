@@ -71,11 +71,40 @@ aws ecs run-task \
 Only needed once per fresh database. The schema also includes
 `schema_migrations` so re-runs are safe.
 
-## Load test
+## Seed demo tenants (once)
+
+The controlplane is internal-only, so `seed.py` runs inside the VPC using
+the same migrate image with a command override. It prints API keys, so
+save the logs to the git-ignored `scripts/.seed_output.aws.txt`:
 
 ```bash
-GATEWAY_URL="http://$(terraform output -raw alb_dns_name)" \
-  k6 run loadtest/script.js
+ARN=$(aws ecs run-task --cluster bgov-cluster --task-definition bgov-migrate \
+  --launch-type FARGATE \
+  --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG]}" \
+  --overrides '{"containerOverrides":[{"name":"migrate","command":["python","scripts/seed.py"]}]}' \
+  --query 'tasks[0].taskArn' --output text)
+aws ecs wait tasks-stopped --cluster bgov-cluster --tasks "$ARN"
+aws logs get-log-events --log-group-name /bgov/controlplane \
+  --log-stream-name "migrate/migrate/${ARN##*/}" \
+  --query 'events[].message' --output text | tr '\t' '\n' > scripts/.seed_output.aws.txt
+```
+
+The keys also sit in CloudWatch Logs for 7 days (the log group's retention).
+
+## Smoke test
+
+```bash
+ALB=http://$(terraform -chdir=deploy/aws/terraform output -raw alb_dns_name)
+curl $ALB/readyz   # {"ready":true}
+```
+
+## Load test
+
+Run the `k6-evidence` workflow from the Actions tab (gateway URL + an
+admin key from the seed output), or locally:
+
+```bash
+k6 run -e GATEWAY_URL=$ALB -e API_KEY=<acme admin key> loadtest/fanout_burst.js
 ```
 
 ## Teardown

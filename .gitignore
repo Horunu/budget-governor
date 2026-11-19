@@ -18,6 +18,7 @@ venv/
 .env.local
 scripts/.seed_output.json
 scripts/.seed_output.env
+scripts/.seed_output.aws.txt
 
 # Terraform (tfvars holds the DB password; state holds it too)
 deploy/aws/terraform/terraform.tfvars
